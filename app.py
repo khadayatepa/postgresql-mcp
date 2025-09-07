@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PostgreSQL MCP Server (Python) — Streamlit-compatible version with NLP-to-SQL support
+PostgreSQL MCP Server (Python) — Streamlit-compatible version with NLP-to-SQL support + Streaming + Toggle
 
 This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools with **natural language query support**.
 
@@ -8,6 +8,7 @@ This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools wi
 - Safe SQL enforcement by default (only SELECT/WITH/SHOW/EXPLAIN allowed unless ALLOW_DANGEROUS_WRITE=true).
 - Streamlit UI for database operations.
 - NLP layer to convert plain English questions into SQL queries.
+- **Streaming toggle** for SQL generation (user can switch between streaming and non-streaming).
 
 Usage on Streamlit Cloud:
 1. Add a `requirements.txt` with:
@@ -95,30 +96,48 @@ def _is_safe_sql(sql: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# NLP-to-SQL conversion using OpenAI
+# NLP-to-SQL conversion using OpenAI (v1.x client, streaming + non-streaming)
 # ---------------------------------------------------------------------------
-def nl_to_sql(nl_query: str, schema_hint: str = "public") -> str:
-    import openai
+def nl_to_sql(nl_query: str, schema_hint: str = "public", stream_mode: bool = True) -> str:
+    from openai import OpenAI
 
+    client = OpenAI()
     system_prompt = f"You are a helpful assistant that converts natural language to SQL for PostgreSQL. Default schema is {schema_hint}. Only generate SQL without explanation."
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": nl_query},
-        ],
-    )
-
-    sql = response["choices"][0]["message"]["content"].strip()
-    return sql
+    if stream_mode:
+        sql_fragments = []
+        with client.chat.completions.stream(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": nl_query},
+            ],
+        ) as stream:
+            sql_box = st.empty()
+            for event in stream:
+                if event.type == "token":
+                    sql_fragments.append(event.token)
+                    sql_box.code("".join(sql_fragments), language="sql")
+            final = stream.get_final_completion()
+            if final.choices:
+                return final.choices[0].message.content.strip()
+        return ""
+    else:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": nl_query},
+            ],
+        )
+        return response.choices[0].message.content.strip()
 
 
 # ---------------------------------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="PostgreSQL MCP Server", layout="wide")
-st.title("📦 PostgreSQL MCP Server — NLP Powered")
+st.title("📦 PostgreSQL MCP Server — NLP Powered (Streaming Toggle)")
 
 # Sidebar connection string
 st.sidebar.header("Database Connection")
@@ -144,25 +163,29 @@ if menu == "Health Check":
 elif menu == "Ask in Natural Language":
     nl_query = st.text_area("Ask a question (e.g., 'Show me the last 10 users')")
     max_rows = st.number_input("Max Rows", value=500, min_value=1, step=100)
+    stream_mode = st.checkbox("Enable Streaming", value=True)
     if st.button("Generate & Run SQL"):
         try:
-            sql = nl_to_sql(nl_query)
-            st.code(sql, language="sql")
-            if not _is_safe_sql(sql):
-                st.warning("⚠️ Unsafe SQL blocked. Set ALLOW_DANGEROUS_WRITE=true to allow writes.")
+            sql = nl_to_sql(nl_query, stream_mode=stream_mode)
+            if not sql:
+                st.error("No SQL generated.")
             else:
-                with _connect(conn_str) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(sql)
-                        if cur.description:
-                            cols = [d[0] for d in cur.description]
-                            rows = cur.fetchmany(size=max_rows + 1)
-                            if len(rows) > max_rows:
-                                st.info(f"Results truncated at {max_rows} rows")
-                                rows = rows[:max_rows]
-                            st.dataframe([dict(zip(cols, r)) for r in rows])
-                        else:
-                            st.success(f"Query executed. Rowcount: {cur.rowcount}")
+                st.code(sql, language="sql")
+                if not _is_safe_sql(sql):
+                    st.warning("⚠️ Unsafe SQL blocked. Set ALLOW_DANGEROUS_WRITE=true to allow writes.")
+                else:
+                    with _connect(conn_str) as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(sql)
+                            if cur.description:
+                                cols = [d[0] for d in cur.description]
+                                rows = cur.fetchmany(size=max_rows + 1)
+                                if len(rows) > max_rows:
+                                    st.info(f"Results truncated at {max_rows} rows")
+                                    rows = rows[:max_rows]
+                                st.dataframe([dict(zip(cols, r)) for r in rows])
+                            else:
+                                st.success(f"Query executed. Rowcount: {cur.rowcount}")
         except Exception as e:
             st.error(f"Error: {e}")
 
