@@ -1468,20 +1468,24 @@ def run_health_check(db_manager: DatabaseManager):
             if result.status == "success":
                 if result.data:
                     with st.expander(f"✅ {check_name}"):
-                        df = pd.DataFrame(result.data)
-                        st.dataframe(df, use_container_width=True)
+                        if PANDAS_AVAILABLE:
+                            df = pd.DataFrame(result.data)
+                            st.dataframe(df, width='stretch')
+                        else:
+                            for i, row in enumerate(result.data):
+                                st.write(f"Row {i+1}:", {k: str(v) for k, v in row.items()})
                         
                         # Specific recommendations
-                        if check_name == "Cache Hit Ratio" and 'cache_hit_ratio' in df.columns:
-                            ratio = df['cache_hit_ratio'].iloc[0] if len(df) > 0 else 0
+                        if check_name == "Cache Hit Ratio" and result.data and 'cache_hit_ratio' in result.data[0]:
+                            ratio = result.data[0]['cache_hit_ratio'] or 0
                             if ratio < 95:
                                 st.warning(f"Cache hit ratio is {ratio}% - consider increasing shared_buffers")
                         
-                        elif check_name == "Unused Indexes" and len(df) > 0:
-                            st.info(f"Found {len(df)} potentially unused indexes")
+                        elif check_name == "Unused Indexes" and len(result.data) > 0:
+                            st.info(f"Found {len(result.data)} potentially unused indexes")
                         
-                        elif check_name == "Table Bloat" and len(df) > 0:
-                            st.warning(f"Found {len(df)} tables with significant bloat - consider VACUUM ANALYZE")
+                        elif check_name == "Table Bloat" and len(result.data) > 0:
+                            st.warning(f"Found {len(result.data)} tables with significant bloat - consider VACUUM ANALYZE")
                 else:
                     st.success(f"✅ {check_name}: No issues found")
             else:
