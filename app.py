@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PostgreSQL MCP Server (Python) — Streamlit-compatible version with NLP-to-SQL support + Streaming + Toggle
+PostgreSQL MCP Server (Python) — Streamlit-compatible version with NLP-to-SQL support + Schema Introspection + Streaming Toggle
 
 This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools with **natural language query support**.
 
@@ -9,6 +9,8 @@ This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools wi
 - Streamlit UI for database operations.
 - NLP layer to convert plain English questions into SQL queries.
 - **Streaming toggle** for SQL generation (user can switch between streaming and non-streaming).
+- Strips accidental ```sql ``` code fences from model outputs to prevent syntax errors.
+- **Schema introspection**: fetches tables & columns automatically to guide NLP model.
 
 Usage on Streamlit Cloud:
 1. Add a `requirements.txt` with:
@@ -85,7 +87,7 @@ def _connect(conn_str: Optional[str] = None, custom: Optional[Dict[str, str]] = 
 
 
 def _is_safe_sql(sql: str) -> bool:
-    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "false":
+    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "true":
         return True
     READ_ONLY_STATEMENTS = (
         r"^\s*SELECT\\b",
@@ -97,17 +99,61 @@ def _is_safe_sql(sql: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Schema introspection for NLP context
+# ---------------------------------------------------------------------------
+def _get_schema_summary(conn_str: str, schema: str = "public") -> str:
+    """Fetch list of tables and columns to help NLP model generate better SQL."""
+    try:
+        with _connect(conn_str) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT table_name, column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = %s
+                    ORDER BY table_name, ordinal_position
+                    """,
+                    (schema,),
+                )
+                rows = cur.fetchall()
+                summary = {}
+                for table, col, dtype in rows:
+                    summary.setdefault(table, []).append(f"{col} ({dtype})")
+                return "\n".join(
+                    f"Table {tbl}: {', '.join(cols)}" for tbl, cols in summary.items()
+                )
+    except Exception as e:
+        return f"(Schema introspection failed: {e})"
+
+
+# ---------------------------------------------------------------------------
 # NLP-to-SQL conversion using OpenAI (v1.x client, streaming + non-streaming)
 # ---------------------------------------------------------------------------
-def nl_to_sql(nl_query: str, schema_hint: str = "public", stream_mode: bool = True) -> str:
+def _clean_sql_output(sql_text: str) -> str:
+    """Remove code fences like ```sql ... ``` or ``` from the model output."""
+    sql_text = sql_text.strip()
+    if sql_text.startswith("```"):
+        sql_text = re.sub(r"^```[a-zA-Z]*", "", sql_text).strip()
+    if sql_text.endswith("```"):
+        sql_text = sql_text[: -3].strip()
+    return sql_text
+
+
+def nl_to_sql(nl_query: str, schema_hint: str, conn_str: str, stream_mode: bool = True) -> str:
     from openai import OpenAI
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
 
+    schema_summary = _get_schema_summary(conn_str, schema_hint)
+
     client = OpenAI(api_key=api_key)
-    system_prompt = f"You are a helpful assistant that converts natural language to SQL for PostgreSQL. Default schema is {schema_hint}. Only generate SQL without explanation."
+    system_prompt = (
+        f"You are a helpful assistant that converts natural language to SQL for PostgreSQL.\n"
+        f"Schema is {schema_hint}. Here are the tables and columns:\n{schema_summary}\n"
+        f"Only generate SQL without explanation."
+    )
 
     if stream_mode:
         sql_fragments = []
@@ -122,10 +168,10 @@ def nl_to_sql(nl_query: str, schema_hint: str = "public", stream_mode: bool = Tr
             for event in stream:
                 if event.type == "token":
                     sql_fragments.append(event.token)
-                    sql_box.code("".join(sql_fragments), language="sql")
+                    sql_box.code(_clean_sql_output("".join(sql_fragments)), language="sql")
             final = stream.get_final_completion()
             if final.choices:
-                return final.choices[0].message.content.strip()
+                return _clean_sql_output(final.choices[0].message.content)
         return ""
     else:
         response = client.chat.completions.create(
@@ -135,14 +181,14 @@ def nl_to_sql(nl_query: str, schema_hint: str = "public", stream_mode: bool = Tr
                 {"role": "user", "content": nl_query},
             ],
         )
-        return response.choices[0].message.content.strip()
+        return _clean_sql_output(response.choices[0].message.content)
 
 
 # ---------------------------------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="PostgreSQL MCP Server", layout="wide")
-st.title("📦 PostgreSQL MCP Server — NLP Powered (Streaming Toggle)")
+st.title("📦 PostgreSQL MCP Server — NLP Powered with Schema Introspection")
 
 # Sidebar connection string
 st.sidebar.header("Database Connection")
@@ -167,11 +213,12 @@ if menu == "Health Check":
 
 elif menu == "Ask in Natural Language":
     nl_query = st.text_area("Ask a question (e.g., 'Show me the last 10 users')")
+    schema_hint = st.text_input("Schema", "public")
     max_rows = st.number_input("Max Rows", value=500, min_value=1, step=100)
     stream_mode = st.checkbox("Enable Streaming", value=True)
     if st.button("Generate & Run SQL"):
         try:
-            sql = nl_to_sql(nl_query, stream_mode=stream_mode)
+            sql = nl_to_sql(nl_query, schema_hint=schema_hint, conn_str=conn_str, stream_mode=stream_mode)
             if not sql:
                 st.error("No SQL generated.")
             else:
