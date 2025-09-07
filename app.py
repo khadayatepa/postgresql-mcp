@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-PostgreSQL MCP Server (Python) — Streamlit-compatible version with remote connection support
+PostgreSQL MCP Server (Python) — Streamlit-compatible version with connection string support
 
 This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools.
 
-- If the `mcp` package is available, it can run as an MCP server.
-- Otherwise, it falls back to an interactive REPL or JSON-line mode.
-- In Streamlit, the tools are wrapped as Streamlit UI functions.
+- Supports connection string (`postgresql://...`).
+- Safe SQL enforcement by default (only SELECT/WITH/SHOW/EXPLAIN allowed unless ALLOW_DANGEROUS_WRITE=true).
+- Streamlit UI for database operations.
 
 Usage on Streamlit Cloud:
 1. Add a `requirements.txt` with:
@@ -16,16 +16,16 @@ Usage on Streamlit Cloud:
    # Optional: mcp
    ```
 2. Deploy this file as `streamlit_app.py` (Streamlit Cloud auto-runs `streamlit run`).
-3. Make sure to set environment variables (or provide connection fields in UI):
-   - `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`
+3. Provide either:
+   - Connection string in the sidebar, OR
+   - Environment variable `DATABASE_URL`.
 
 """
 
-import json
 import os
 import re
 import streamlit as st
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 # ---------------------------------------------------------------------------
 # PostgreSQL driver handling
@@ -49,13 +49,18 @@ except Exception:
         _dict_row = None
 
 
-def _connect(custom: Optional[Dict[str, str]] = None):
+def _connect(conn_str: Optional[str] = None, custom: Optional[Dict[str, str]] = None):
     if _psycopg_mod is None:
         raise RuntimeError(
             "No PostgreSQL driver found. Install with:\n"
             "  pip install psycopg[binary]   (recommended)\n"
             "  pip install psycopg2-binary\n"
         )
+
+    if conn_str:
+        if _dict_row is not None and hasattr(_psycopg_mod, "connect"):
+            return _psycopg_mod.connect(conn_str, row_factory=_dict_row)
+        return _psycopg_mod.connect(conn_str)
 
     conn_kwargs = {
         "host": os.getenv("PGHOST"),
@@ -66,7 +71,6 @@ def _connect(custom: Optional[Dict[str, str]] = None):
     }
     if custom:
         conn_kwargs.update(custom)
-
     conn_kwargs = {k: v for k, v in conn_kwargs.items() if v}
 
     if hasattr(_psycopg_mod, "connect"):
@@ -94,28 +98,21 @@ def _is_safe_sql(sql: str) -> bool:
 st.set_page_config(page_title="PostgreSQL MCP Server", layout="wide")
 st.title("📦 PostgreSQL MCP Server — Streamlit UI")
 
-# Connection parameters
+# Sidebar connection string
 st.sidebar.header("Database Connection")
-def_host = os.getenv("PGHOST", "")
-def_port = os.getenv("PGPORT", "5432")
-def_db = os.getenv("PGDATABASE", "")
-def_user = os.getenv("PGUSER", "")
-def_pwd = os.getenv("PGPASSWORD", "")
+def_conn_str = os.getenv(
+    "DATABASE_URL",
+    "postgresql://neondb_owner:npg_oZTFpVus5S1N@ep-broad-king-adhmh6wn-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
+)
 
-custom_conn = {
-    "host": st.sidebar.text_input("Host", def_host),
-    "port": st.sidebar.text_input("Port", def_port),
-    "dbname": st.sidebar.text_input("Database", def_db),
-    "user": st.sidebar.text_input("User", def_user),
-    "password": st.sidebar.text_input("Password", def_pwd, type="password"),
-}
+conn_str = st.sidebar.text_input("Connection String", def_conn_str)
 
 menu = st.sidebar.radio("Choose action", ["Health Check", "List Tables", "Describe Table", "Run SQL"])
 
 if menu == "Health Check":
     st.subheader("🔍 Health Check")
     try:
-        with _connect(custom_conn) as conn:
+        with _connect(conn_str) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
         st.success("Database connection OK ✅")
@@ -132,15 +129,12 @@ elif menu == "List Tables":
         ORDER BY table_name
         """
         try:
-            with _connect(custom_conn) as conn:
+            with _connect(conn_str) as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, (schema,))
                     cols = [d[0] for d in cur.description] if cur.description else []
                     rows = cur.fetchall()
-                    if _dict_row is not None:
-                        st.json(rows)
-                    else:
-                        st.dataframe([dict(zip(cols, r)) for r in rows])
+                    st.dataframe([dict(zip(cols, r)) for r in rows])
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -155,15 +149,12 @@ elif menu == "Describe Table":
         ORDER BY ordinal_position
         """
         try:
-            with _connect(custom_conn) as conn:
+            with _connect(conn_str) as conn:
                 with conn.cursor() as cur:
                     cur.execute(sql, (schema, table))
                     cols = [d[0] for d in cur.description] if cur.description else []
                     rows = cur.fetchall()
-                    if _dict_row is not None:
-                        st.json(rows)
-                    else:
-                        st.dataframe([dict(zip(cols, r)) for r in rows])
+                    st.dataframe([dict(zip(cols, r)) for r in rows])
         except Exception as e:
             st.error(f"Error: {e}")
 
@@ -175,7 +166,7 @@ elif menu == "Run SQL":
             st.warning("⚠️ Unsafe SQL blocked. Set ALLOW_DANGEROUS_WRITE=true to allow writes.")
         else:
             try:
-                with _connect(custom_conn) as conn:
+                with _connect(conn_str) as conn:
                     with conn.cursor() as cur:
                         cur.execute(query)
                         if cur.description:
