@@ -22,6 +22,7 @@ Usage on Streamlit Cloud:
 3. Provide either:
    - Connection string in the sidebar, OR
    - Environment variable `DATABASE_URL`.
+   - API key via environment variable `OPENAI_API_KEY` (required for NLP).
 
 """
 
@@ -101,7 +102,11 @@ def _is_safe_sql(sql: str) -> bool:
 def nl_to_sql(nl_query: str, schema_hint: str = "public", stream_mode: bool = True) -> str:
     from openai import OpenAI
 
-    client = OpenAI()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
+
+    client = OpenAI(api_key=api_key)
     system_prompt = f"You are a helpful assistant that converts natural language to SQL for PostgreSQL. Default schema is {schema_hint}. Only generate SQL without explanation."
 
     if stream_mode:
