@@ -17,6 +17,17 @@ A comprehensive, enterprise-grade PostgreSQL management interface with:
 
 Author: Professional Development Team
 Version: 2.0.0
+
+Required Dependencies (add to requirements.txt):
+streamlit>=1.28.0
+psycopg[binary]>=3.1.0
+openai>=1.0.0
+pandas>=1.5.0
+plotly>=5.0.0
+sqlparse>=0.4.0
+
+Optional Dependencies:
+networkx>=2.8.0
 """
 
 import os
