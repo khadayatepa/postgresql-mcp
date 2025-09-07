@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-PostgreSQL MCP Server (Python) — Streamlit-compatible version with connection string support
+PostgreSQL MCP Server (Python) — Streamlit-compatible version with NLP-to-SQL support
 
-This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools.
+This script can run on **Streamlit Cloud** and expose PostgreSQL helper tools with **natural language query support**.
 
 - Supports connection string (`postgresql://...`).
 - Safe SQL enforcement by default (only SELECT/WITH/SHOW/EXPLAIN allowed unless ALLOW_DANGEROUS_WRITE=true).
 - Streamlit UI for database operations.
+- NLP layer to convert plain English questions into SQL queries.
 
 Usage on Streamlit Cloud:
 1. Add a `requirements.txt` with:
    ```
    streamlit
    psycopg[binary]
+   openai
    # Optional: mcp
    ```
 2. Deploy this file as `streamlit_app.py` (Streamlit Cloud auto-runs `streamlit run`).
@@ -81,7 +83,7 @@ def _connect(conn_str: Optional[str] = None, custom: Optional[Dict[str, str]] = 
 
 
 def _is_safe_sql(sql: str) -> bool:
-    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "false":
+    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "true":
         return True
     READ_ONLY_STATEMENTS = (
         r"^\s*SELECT\\b",
@@ -93,10 +95,30 @@ def _is_safe_sql(sql: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# NLP-to-SQL conversion using OpenAI
+# ---------------------------------------------------------------------------
+def nl_to_sql(nl_query: str, schema_hint: str = "public") -> str:
+    import openai
+
+    system_prompt = f"You are a helpful assistant that converts natural language to SQL for PostgreSQL. Default schema is {schema_hint}. Only generate SQL without explanation."
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": nl_query},
+        ],
+    )
+
+    sql = response["choices"][0]["message"]["content"].strip()
+    return sql
+
+
+# ---------------------------------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="PostgreSQL MCP Server", layout="wide")
-st.title("📦 PostgreSQL MCP Server — Streamlit UI")
+st.title("📦 PostgreSQL MCP Server — NLP Powered")
 
 # Sidebar connection string
 st.sidebar.header("Database Connection")
@@ -107,7 +129,7 @@ def_conn_str = os.getenv(
 
 conn_str = st.sidebar.text_input("Connection String", def_conn_str)
 
-menu = st.sidebar.radio("Choose action", ["Health Check", "List Tables", "Describe Table", "Run SQL"])
+menu = st.sidebar.radio("Choose action", ["Health Check", "Ask in Natural Language", "Run SQL", "List Tables", "Describe Table"])
 
 if menu == "Health Check":
     st.subheader("🔍 Health Check")
@@ -118,6 +140,31 @@ if menu == "Health Check":
         st.success("Database connection OK ✅")
     except Exception as e:
         st.error(f"Database connection failed: {e}")
+
+elif menu == "Ask in Natural Language":
+    nl_query = st.text_area("Ask a question (e.g., 'Show me the last 10 users')")
+    max_rows = st.number_input("Max Rows", value=500, min_value=1, step=100)
+    if st.button("Generate & Run SQL"):
+        try:
+            sql = nl_to_sql(nl_query)
+            st.code(sql, language="sql")
+            if not _is_safe_sql(sql):
+                st.warning("⚠️ Unsafe SQL blocked. Set ALLOW_DANGEROUS_WRITE=true to allow writes.")
+            else:
+                with _connect(conn_str) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(sql)
+                        if cur.description:
+                            cols = [d[0] for d in cur.description]
+                            rows = cur.fetchmany(size=max_rows + 1)
+                            if len(rows) > max_rows:
+                                st.info(f"Results truncated at {max_rows} rows")
+                                rows = rows[:max_rows]
+                            st.dataframe([dict(zip(cols, r)) for r in rows])
+                        else:
+                            st.success(f"Query executed. Rowcount: {cur.rowcount}")
+        except Exception as e:
+            st.error(f"Error: {e}")
 
 elif menu == "List Tables":
     schema = st.text_input("Schema", "public")
