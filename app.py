@@ -566,7 +566,7 @@ def render_branded_header():
     <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                 padding: 2rem; border-radius: 15px; text-align: center; 
                 margin-bottom: 2rem; color: white;">
-        <h1 style="margin: 0; font-size: 2.5rem;">🐘 PostgreSQL MCP Server Pro</h1>
+        <h1 style="margin: 0; font-size: 2.5rem;">🐘 PostgreSQL AI Enabled Database Management & Analytics</h1>
         <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem; opacity: 0.9;">
             Enterprise-Grade Database Management & AI-Powered Analytics
         </p>
