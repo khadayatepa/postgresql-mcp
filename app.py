@@ -1,33 +1,13 @@
 #!/usr/bin/env python3
 """
-Professional PostgreSQL MCP Server with Advanced Features
-=========================================================
+PostgreSQL MCP Server with Fixed AI Query Execution
+==================================================
 
-A comprehensive, enterprise-grade PostgreSQL management interface with:
-- 🤖 Advanced NLP-to-SQL with multiple AI providers
-- 📊 Interactive data visualization and analytics
-- 🔐 Enhanced security and query optimization
-- 📈 Performance monitoring and query profiling
-- 🎨 Modern, professional UI with dark/light themes
-- 💾 Query history and favorites management
-- 🔄 Real-time query execution with progress tracking
-- 📋 Advanced schema exploration and ER diagrams
-- 🚀 Query optimization suggestions
-- 📤 Data export in multiple formats
+Complete application with working AI-powered natural language to SQL conversion
+and reliable query execution.
 
 Author: Prashant Khadayate
-Version: 2.0.0
-
-Required Dependencies (add to requirements.txt):
-streamlit>=1.28.0
-psycopg[binary]>=3.1.0
-openai>=1.0.0
-pandas>=1.5.0
-plotly>=5.0.0
-sqlparse>=0.4.0
-
-Optional Dependencies:
-networkx>=2.8.0
+Version: 2.0.1
 """
 
 import os
@@ -42,8 +22,7 @@ import streamlit as st
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, asdict
-from io import StringIO
-import base64
+from contextlib import contextmanager
 
 # Enhanced imports for professional features
 try:
@@ -52,13 +31,7 @@ try:
 except ImportError:
     SQLPARSE_AVAILABLE = False
 
-try:
-    import networkx as nx
-    NETWORKX_AVAILABLE = True
-except ImportError:
-    NETWORKX_AVAILABLE = False
-
-PANDAS_AVAILABLE = True  # pandas is imported above
+PANDAS_AVAILABLE = True
 
 # ---------------------------------------------------------------------------
 # Configuration and Data Models
@@ -93,71 +66,117 @@ class TableInfo:
 # Enhanced PostgreSQL Connection & Operations
 # ---------------------------------------------------------------------------
 
-_psycopg_mod = None
-_dict_row = None
-
-try:
-    import psycopg as _psycopg
-    try:
-        from psycopg.rows import dict_row as _dict_row
-    except Exception:
-        _dict_row = None
-    _psycopg_mod = _psycopg
-except Exception:
-    try:
-        import psycopg2 as _psycopg
-        import psycopg2.extras
-        _dict_row = psycopg2.extras.RealDictCursor
-        _psycopg_mod = _psycopg
-    except Exception:
-        _psycopg_mod = None
-
-
 class DatabaseManager:
-    """Professional database management class"""
+    """Professional database management class with improved error handling"""
     
     def __init__(self, conn_str: str):
         self.conn_str = conn_str
-        self._connection_pool = {}
+        self._test_connection()
     
-    def get_connection(self):
-        """Get database connection with proper error handling"""
-        if _psycopg_mod is None:
-            raise RuntimeError("PostgreSQL driver not found. Install psycopg[binary]")
-        
+    def _test_connection(self):
+        """Test the database connection on initialization"""
         try:
-            if hasattr(_psycopg_mod, 'connect') and _dict_row:
-                return _psycopg_mod.connect(self.conn_str, row_factory=_dict_row)
-            elif _dict_row and hasattr(_psycopg_mod, 'extras'):
-                conn = _psycopg_mod.connect(self.conn_str)
-                conn.cursor_factory = _dict_row
-                return conn
-            return _psycopg_mod.connect(self.conn_str)
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
         except Exception as e:
-            st.error(f"Database connection failed: {e}")
+            st.error(f"Failed to establish database connection: {e}")
             raise
     
-    def execute_query(self, sql: str, params: Tuple = None, fetch: bool = True) -> QueryResult:
-        """Execute query with comprehensive result tracking"""
+    @contextmanager
+    def get_connection(self):
+        """Get database connection with proper error handling and cleanup"""
+        conn = None
+        try:
+            # Try psycopg3 first
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+                conn = psycopg.connect(self.conn_str, row_factory=dict_row)
+                yield conn
+                return
+            except ImportError:
+                pass
+            except Exception as e:
+                st.warning(f"psycopg3 connection failed: {e}, trying psycopg2...")
+            
+            # Fall back to psycopg2
+            try:
+                import psycopg2
+                import psycopg2.extras
+                conn = psycopg2.connect(self.conn_str)
+                conn.cursor_factory = psycopg2.extras.RealDictCursor
+                yield conn
+                return
+            except ImportError:
+                raise RuntimeError("No PostgreSQL driver found. Please install psycopg[binary] or psycopg2-binary")
+            except Exception as e:
+                raise RuntimeError(f"Database connection failed: {e}")
+                
+        except Exception as e:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+            raise
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+    
+    def execute_query(self, sql: str, params: Optional[Tuple] = None, fetch: bool = True) -> QueryResult:
+        """Execute query with comprehensive result tracking and better error handling"""
         start_time = time.time()
         query_id = hashlib.md5(f"{sql}{time.time()}".encode()).hexdigest()[:8]
+        
+        # Clean and validate SQL
+        sql_clean = sql.strip()
+        if not sql_clean:
+            return QueryResult(
+                sql=sql,
+                data=[],
+                columns=[],
+                execution_time=0,
+                row_count=0,
+                timestamp=datetime.now(),
+                query_id=query_id,
+                status="error",
+                error="Empty SQL query"
+            )
         
         try:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(sql, params or ())
+                    # Execute the query
+                    if params:
+                        cur.execute(sql_clean, params)
+                    else:
+                        cur.execute(sql_clean)
                     
                     execution_time = time.time() - start_time
                     
+                    # Handle different query types
                     if fetch and cur.description:
                         columns = [desc[0] for desc in cur.description]
                         rows = cur.fetchall()
                         
-                        # Convert to list of dicts
-                        if hasattr(rows[0] if rows else {}, 'keys'):
-                            data = [dict(row) for row in rows]
+                        # Convert to list of dicts - handle both psycopg2 and psycopg3
+                        if rows:
+                            if hasattr(rows[0], 'keys'):
+                                # Already dict-like (RealDict or psycopg3 dict_row)
+                                data = [dict(row) for row in rows]
+                            elif isinstance(rows[0], (list, tuple)):
+                                # Tuple/list format
+                                data = [dict(zip(columns, row)) for row in rows]
+                            else:
+                                # Fallback
+                                data = [dict(zip(columns, row)) for row in rows]
                         else:
-                            data = [dict(zip(columns, row)) for row in rows]
+                            data = []
                         
                         return QueryResult(
                             sql=sql,
@@ -169,17 +188,34 @@ class DatabaseManager:
                             query_id=query_id
                         )
                     else:
+                        # Non-SELECT query or no fetch requested
+                        row_count = getattr(cur, 'rowcount', 0)
+                        if hasattr(conn, 'commit'):
+                            conn.commit()  # Commit for INSERT/UPDATE/DELETE
+                        
                         return QueryResult(
                             sql=sql,
                             data=[],
                             columns=[],
                             execution_time=execution_time,
-                            row_count=cur.rowcount if hasattr(cur, 'rowcount') else 0,
+                            row_count=row_count if row_count >= 0 else 0,
                             timestamp=datetime.now(),
                             query_id=query_id
                         )
         
         except Exception as e:
+            error_msg = str(e)
+            
+            # Provide more helpful error messages
+            if "does not exist" in error_msg.lower():
+                error_msg = f"Table or column does not exist: {error_msg}"
+            elif "syntax error" in error_msg.lower():
+                error_msg = f"SQL syntax error: {error_msg}"
+            elif "permission denied" in error_msg.lower():
+                error_msg = f"Permission denied: {error_msg}"
+            elif "connection" in error_msg.lower():
+                error_msg = f"Database connection error: {error_msg}"
+            
             return QueryResult(
                 sql=sql,
                 data=[],
@@ -189,7 +225,7 @@ class DatabaseManager:
                 timestamp=datetime.now(),
                 query_id=query_id,
                 status="error",
-                error=str(e)
+                error=error_msg
             )
     
     def get_enhanced_schema_info(self, schema: str = "public") -> List[TableInfo]:
@@ -256,55 +292,29 @@ class DatabaseManager:
             ))
         
         return tables
-    
-    def get_query_performance_stats(self) -> Dict:
-        """Get database performance statistics"""
-        try:
-            stats_sql = """
-            SELECT 
-                schemaname,
-                tablename,
-                seq_scan,
-                seq_tup_read,
-                idx_scan,
-                idx_tup_fetch,
-                n_tup_ins,
-                n_tup_upd,
-                n_tup_del
-            FROM pg_stat_user_tables
-            ORDER BY seq_tup_read DESC
-            LIMIT 10
-            """
-            result = self.execute_query(stats_sql)
-            return {"table_stats": result.data}
-        except:
-            return {"table_stats": []}
-
 
 # ---------------------------------------------------------------------------
-# Enhanced NLP-to-SQL with Multiple Providers
+# AI Query Generation
 # ---------------------------------------------------------------------------
 
 class AIQueryGenerator:
-    """Professional AI-powered SQL generation"""
+    """AI-powered SQL generation"""
     
     def __init__(self):
         self.providers = {
             "OpenAI GPT-4": self._openai_generate,
-            "Claude": self._claude_generate,
-            "Local Model": self._local_generate
         }
     
     def generate_sql(self, nl_query: str, schema_context: str, provider: str = "OpenAI GPT-4", 
                     stream: bool = True) -> str:
-        """Generate SQL from natural language with provider selection"""
+        """Generate SQL from natural language"""
         if provider in self.providers:
             return self.providers[provider](nl_query, schema_context, stream)
         else:
             raise ValueError(f"Provider {provider} not supported")
     
     def _openai_generate(self, nl_query: str, schema_context: str, stream: bool) -> str:
-        """OpenAI implementation with advanced prompting"""
+        """OpenAI implementation"""
         try:
             from openai import OpenAI
             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -317,10 +327,10 @@ Database Schema:
 Rules:
 1. Generate PostgreSQL-compatible SQL only
 2. Use proper indexing strategies when possible
-3. Include query optimization hints
-4. Handle edge cases (NULL values, empty results)
-5. Use appropriate JOINs and subqueries
-6. Return only the SQL query, no explanations
+3. Handle edge cases (NULL values, empty results)
+4. Use appropriate JOINs and subqueries
+5. Return only the SQL query, no explanations
+6. Always include appropriate LIMIT clauses for safety
 
 Current timestamp: {datetime.now()}
 """
@@ -363,16 +373,6 @@ Current timestamp: {datetime.now()}
             st.error(f"OpenAI API error: {e}")
             return ""
     
-    def _claude_generate(self, nl_query: str, schema_context: str, stream: bool) -> str:
-        """Claude implementation (placeholder for now)"""
-        st.info("Claude integration coming soon! Using OpenAI as fallback.")
-        return self._openai_generate(nl_query, schema_context, stream)
-    
-    def _local_generate(self, nl_query: str, schema_context: str, stream: bool) -> str:
-        """Local model implementation (placeholder)"""
-        st.info("Local model integration coming soon! Using OpenAI as fallback.")
-        return self._openai_generate(nl_query, schema_context, stream)
-    
     def _clean_sql(self, sql: str) -> str:
         """Enhanced SQL cleaning and formatting"""
         if not sql:
@@ -392,97 +392,12 @@ Current timestamp: {datetime.now()}
         
         return sql
 
-
 # ---------------------------------------------------------------------------
-# Data Visualization & Analytics
-# ---------------------------------------------------------------------------
-
-class DataVisualizer:
-    """Professional data visualization component"""
-    
-    @staticmethod
-    def create_auto_chart(df: pd.DataFrame, chart_type: str = "auto") -> go.Figure:
-        """Automatically create appropriate visualizations"""
-        if df.empty:
-            return go.Figure()
-        
-        numeric_cols = df.select_dtypes(include=['number']).columns
-        categorical_cols = df.select_dtypes(include=['object', 'category']).columns
-        
-        if chart_type == "auto":
-            if len(numeric_cols) >= 2:
-                chart_type = "scatter"
-            elif len(numeric_cols) == 1 and len(categorical_cols) >= 1:
-                chart_type = "bar"
-            elif len(categorical_cols) >= 1:
-                chart_type = "pie"
-            else:
-                chart_type = "line"
-        
-        try:
-            if chart_type == "bar" and len(categorical_cols) > 0 and len(numeric_cols) > 0:
-                fig = px.bar(df, x=categorical_cols[0], y=numeric_cols[0],
-                           title=f"{numeric_cols[0]} by {categorical_cols[0]}")
-            elif chart_type == "scatter" and len(numeric_cols) >= 2:
-                color_col = categorical_cols[0] if len(categorical_cols) > 0 else None
-                fig = px.scatter(df, x=numeric_cols[0], y=numeric_cols[1], 
-                               color=color_col, title="Scatter Plot")
-            elif chart_type == "line" and len(numeric_cols) > 0:
-                fig = px.line(df, y=numeric_cols[0], title="Line Chart")
-            elif chart_type == "pie" and len(categorical_cols) > 0:
-                value_col = numeric_cols[0] if len(numeric_cols) > 0 else None
-                if value_col:
-                    fig = px.pie(df, names=categorical_cols[0], values=value_col)
-                else:
-                    counts = df[categorical_cols[0]].value_counts()
-                    fig = px.pie(values=counts.values, names=counts.index)
-            else:
-                # Fallback to simple bar chart
-                if len(df.columns) > 0:
-                    fig = px.bar(x=range(len(df)), y=df.iloc[:, 0].values)
-                else:
-                    fig = go.Figure()
-            
-            fig.update_layout(
-                template="plotly_white",
-                height=400,
-                margin=dict(l=0, r=0, t=40, b=0)
-            )
-            return fig
-        
-        except Exception as e:
-            st.error(f"Visualization error: {e}")
-            return go.Figure()
-    
-    @staticmethod
-    def create_performance_dashboard(stats: Dict) -> List[go.Figure]:
-        """Create performance monitoring dashboard"""
-        figures = []
-        
-        if "table_stats" in stats and stats["table_stats"]:
-            df = pd.DataFrame(stats["table_stats"])
-            
-            # Table scan efficiency
-            if 'seq_scan' in df.columns and 'idx_scan' in df.columns:
-                fig1 = px.bar(df, x='tablename', y=['seq_scan', 'idx_scan'],
-                             title="Table Scan Types", barmode='group')
-                figures.append(fig1)
-            
-            # Table operations
-            if all(col in df.columns for col in ['n_tup_ins', 'n_tup_upd', 'n_tup_del']):
-                fig2 = px.bar(df, x='tablename', y=['n_tup_ins', 'n_tup_upd', 'n_tup_del'],
-                             title="Table Operations", barmode='stack')
-                figures.append(fig2)
-        
-        return figures
-
-
-# ---------------------------------------------------------------------------
-# Query Management & History
+# Query Management
 # ---------------------------------------------------------------------------
 
 class QueryManager:
-    """Professional query history and favorites management"""
+    """Query history and favorites management"""
     
     def __init__(self):
         if 'query_history' not in st.session_state:
@@ -514,9 +429,8 @@ class QueryManager:
         """Get favorite queries"""
         return st.session_state.favorite_queries
 
-
 # ---------------------------------------------------------------------------
-# Professional UI Components
+# UI Functions
 # ---------------------------------------------------------------------------
 
 def setup_professional_theme():
@@ -560,25 +474,8 @@ def setup_professional_theme():
     """, unsafe_allow_html=True)
 
 
-def render_branded_header():
-    """Render branded header"""
-    st.markdown("""
-    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                padding: 2rem; border-radius: 15px; text-align: center; 
-                margin-bottom: 2rem; color: white;">
-        <h1 style="margin: 0; font-size: 2.5rem;">🐘 PostgreSQL MCP Server Pro</h1>
-        <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem; opacity: 0.9;">
-            Enterprise-Grade Database Management & AI-Powered Analytics
-        </p>
-        <p style="margin: 0.5rem 0 0 0; opacity: 0.8;">
-            Created by <strong>Prashant Khadayate</strong> | Version 2.0.0
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-
 def render_connection_sidebar() -> Tuple[str, Dict]:
-    """Render professional connection sidebar"""
+    """Render connection sidebar"""
     st.sidebar.markdown("## 🔗 Database Connection")
     
     connection_method = st.sidebar.radio(
@@ -595,98 +492,56 @@ def render_connection_sidebar() -> Tuple[str, Dict]:
             type="password",
             help="postgresql://user:password@host:port/database"
         )
-        db_config = {"connection_string": conn_str}
+        
+        # Validate connection string format
+        if conn_str and not conn_str.startswith(("postgresql://", "postgres://")):
+            st.sidebar.error("Connection string must start with postgresql:// or postgres://")
+            conn_str = ""
+            
     else:
-        db_config = {
-            "host": st.sidebar.text_input("Host", value="localhost"),
-            "port": st.sidebar.number_input("Port", value=5432, min_value=1, max_value=65535),
-            "database": st.sidebar.text_input("Database", value="postgres"),
-            "username": st.sidebar.text_input("Username", value="postgres"),
-            "password": st.sidebar.text_input("Password", type="password"),
-        }
-        conn_str = f"postgresql://{db_config['username']}:{db_config['password']}@{db_config['host']}:{db_config['port']}/{db_config['database']}"
+        host = st.sidebar.text_input("Host", value="localhost")
+        port = st.sidebar.number_input("Port", value=5432, min_value=1, max_value=65535)
+        database = st.sidebar.text_input("Database", value="postgres")
+        username = st.sidebar.text_input("Username", value="postgres")
+        password = st.sidebar.text_input("Password", type="password")
+        
+        if all([host, port, database, username, password]):
+            conn_str = f"postgresql://{username}:{password}@{host}:{port}/{database}"
+        else:
+            conn_str = ""
     
     # Connection test
-    if st.sidebar.button("🔍 Test Connection"):
-        try:
-            db_manager = DatabaseManager(conn_str)
-            with db_manager.get_connection():
-                st.sidebar.success("✅ Connection successful!")
-        except Exception as e:
-            st.sidebar.error(f"❌ Connection failed: {e}")
+    if conn_str and st.sidebar.button("🔍 Test Connection"):
+        with st.sidebar.spinner("Testing connection..."):
+            try:
+                db_manager = DatabaseManager(conn_str)
+                result = db_manager.execute_query("SELECT version() as version")
+                if result.status == "success":
+                    st.sidebar.success("✅ Connection successful!")
+                    if result.data:
+                        version = result.data[0].get('version', 'Unknown')
+                        st.sidebar.info(f"PostgreSQL: {version[:50]}...")
+                else:
+                    st.sidebar.error(f"❌ Connection failed: {result.error}")
+            except Exception as e:
+                st.sidebar.error(f"❌ Connection failed: {e}")
     
     # Advanced settings
     with st.sidebar.expander("⚙️ Advanced Settings"):
         max_rows = st.number_input("Max Rows per Query", value=1000, min_value=1, max_value=10000)
-        query_timeout = st.number_input("Query Timeout (seconds)", value=30, min_value=5, max_value=300)
-        ai_provider = st.selectbox("AI Provider", ["OpenAI GPT-4", "Claude", "Local Model"])
+        ai_provider = st.selectbox("AI Provider", ["OpenAI GPT-4"])
         enable_streaming = st.checkbox("Enable AI Streaming", value=True)
     
     return conn_str, {
         "max_rows": max_rows,
-        "query_timeout": query_timeout,
         "ai_provider": ai_provider,
         "enable_streaming": enable_streaming
     }
 
 
-def render_main_dashboard(db_manager: DatabaseManager, settings: Dict):
-    """Render the main application dashboard"""
-    
-    # Header with metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    try:
-        # Get basic database info
-        db_info = db_manager.execute_query("SELECT version() as version")
-        db_size = db_manager.execute_query("SELECT pg_size_pretty(pg_database_size(current_database())) as size")
-        table_count = db_manager.execute_query("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public'")
-        
-        with col1:
-            st.metric("Database Status", "🟢 Connected", "Healthy")
-        with col2:
-            st.metric("Database Size", db_size.data[0]['size'] if db_size.data else "Unknown")
-        with col3:
-            st.metric("Tables", table_count.data[0]['count'] if table_count.data else "0")
-        with col4:
-            st.metric("AI Provider", settings['ai_provider'])
-    
-    except Exception as e:
-        st.error(f"Failed to load database metrics: {e}")
-    
-    # Main navigation
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-        "🤖 AI Query", "📋 Schema Explorer", "⚡ SQL Editor", 
-        "📊 Analytics", "📈 Performance", "⭐ Favorites"
-    ])
-    
-    # Initialize components
-    ai_generator = AIQueryGenerator()
-    visualizer = DataVisualizer()
-    query_manager = QueryManager()
-    
-    with tab1:
-        render_ai_query_interface(db_manager, ai_generator, query_manager, settings)
-    
-    with tab2:
-        render_schema_explorer(db_manager)
-    
-    with tab3:
-        render_sql_editor(db_manager, query_manager, settings)
-    
-    with tab4:
-        render_analytics_dashboard(db_manager, visualizer, settings)
-    
-    with tab5:
-        render_performance_dashboard(db_manager, visualizer)
-    
-    with tab6:
-        render_favorites_manager(db_manager, query_manager, settings)
-
-
 def render_ai_query_interface(db_manager: DatabaseManager, ai_generator: AIQueryGenerator, 
                              query_manager: QueryManager, settings: Dict):
-    """Render AI-powered query interface"""
+    """Render AI-powered query interface with fixed execution"""
     st.markdown("### 🤖 Natural Language to SQL")
     st.markdown("Ask questions about your data in plain English, and I'll generate optimized SQL queries for you.")
     
@@ -695,73 +550,395 @@ def render_ai_query_interface(db_manager: DatabaseManager, ai_generator: AIQuery
     with col1:
         nl_query = st.text_area(
             "What would you like to know?",
-            placeholder="e.g., Show me the top 10 customers by total orders in the last month",
-            height=100
+            placeholder="e.g., Show me all tables in the database",
+            height=100,
+            key="nl_query_input"
         )
     
     with col2:
         schema = st.selectbox("Schema", ["public"], help="Select the database schema to query")
         max_rows = st.number_input("Max Results", value=settings['max_rows'], min_value=1, max_value=10000)
     
-    if st.button("🚀 Generate & Execute Query", type="primary"):
+    # Initialize session state for generated SQL
+    if 'generated_sql' not in st.session_state:
+        st.session_state.generated_sql = ""
+    if 'show_execute_button' not in st.session_state:
+        st.session_state.show_execute_button = False
+    
+    # Generate SQL button
+    if st.button("🚀 Generate SQL Query", type="primary"):
         if not nl_query.strip():
             st.warning("Please enter your question first.")
+            st.session_state.show_execute_button = False
             return
         
         try:
             # Get schema context
-            tables = db_manager.get_enhanced_schema_info(schema)
-            schema_context = "\n".join([
-                f"Table: {t.name} ({t.row_count} rows, {t.size})\nColumns: " + 
-                ", ".join([f"{c['column_name']} ({c['data_type']})" for c in t.columns[:5]])
-                for t in tables[:10]  # Limit context size
-            ])
+            with st.spinner("Loading database schema..."):
+                tables = db_manager.get_enhanced_schema_info(schema)
+                schema_context = "\n".join([
+                    f"Table: {t.name} ({t.row_count} rows, {t.size})\nColumns: " + 
+                    ", ".join([f"{c['column_name']} ({c['data_type']})" for c in t.columns[:5]])
+                    for t in tables[:10]  # Limit context size
+                ])
             
             # Generate SQL
-            with st.spinner("🧠 AI is thinking..."):
+            with st.spinner("🧠 AI is generating your SQL query..."):
                 sql = ai_generator.generate_sql(
                     nl_query, schema_context, 
-                    settings['ai_provider'], settings['enable_streaming']
+                    settings.get('ai_provider', 'OpenAI GPT-4'), 
+                    settings.get('enable_streaming', True)
                 )
             
             if sql:
-                st.markdown("**Generated SQL:**")
-                st.code(sql, language="sql")
-                
-                # Execute query
-                if st.button("▶️ Execute Query"):
-                    with st.spinner("Executing query..."):
-                        result = db_manager.execute_query(sql)
-                        
-                        if result.status == "success":
-                            query_manager.add_to_history(result)
-                            
-                            st.markdown(f"""
-                            <div class="success-box">
-                                ✅ Query executed successfully!<br>
-                                📊 Returned {result.row_count} rows in {result.execution_time:.2f}s
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            if result.data:
-                                df = pd.DataFrame(result.data)
-                                st.dataframe(df, use_container_width=True)
-                                
-                                # Auto-visualization
-                                if len(df) > 0:
-                                    st.markdown("**📈 Auto-Generated Visualization:**")
-                                    fig = DataVisualizer.create_auto_chart(df)
-                                    if fig.data:
-                                        st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.markdown(f"""
-                            <div class="error-box">
-                                ❌ Query failed: {result.error}
-                            </div>
-                            """, unsafe_allow_html=True)
+                st.session_state.generated_sql = sql
+                st.session_state.show_execute_button = True
+                st.success("✅ SQL query generated successfully!")
+            else:
+                st.error("❌ Failed to generate SQL query. Please try rephrasing your question.")
+                st.session_state.show_execute_button = False
             
         except Exception as e:
             st.error(f"Error generating query: {e}")
+            st.session_state.show_execute_button = False
+    
+    # Display generated SQL and execute button
+    if st.session_state.generated_sql:
+        st.markdown("**Generated SQL:**")
+        
+        # Allow editing of generated SQL
+        edited_sql = st.text_area(
+            "You can modify the generated SQL if needed:",
+            value=st.session_state.generated_sql,
+            height=150,
+            key="generated_sql_editor"
+        )
+        
+        # Update session state if user modified the SQL
+        if edited_sql != st.session_state.generated_sql:
+            st.session_state.generated_sql = edited_sql
+        
+        st.code(st.session_state.generated_sql, language="sql")
+        
+        # Execute button with proper logic
+        col_exec, col_explain, col_save = st.columns([2, 2, 2])
+        
+        with col_exec:
+            if st.button("▶️ Execute Query", key="ai_execute_btn"):
+                execute_ai_generated_query(db_manager, query_manager, st.session_state.generated_sql, max_rows)
+        
+        with col_explain:
+            if st.button("📋 Explain Query", key="ai_explain_btn"):
+                explain_ai_query(st.session_state.generated_sql)
+        
+        with col_save:
+            if st.button("⭐ Save to Favorites", key="ai_save_btn"):
+                save_ai_query_to_favorites(query_manager, st.session_state.generated_sql, nl_query)
+
+
+def execute_ai_generated_query(db_manager: DatabaseManager, query_manager: QueryManager, sql: str, max_rows: int):
+    """Execute AI-generated SQL query with comprehensive handling"""
+    
+    if not sql or not sql.strip():
+        st.error("No SQL query to execute")
+        return
+    
+    # Show execution progress
+    progress_container = st.container()
+    
+    with progress_container:
+        progress_bar = st.progress(0, text="Preparing to execute query...")
+        
+        try:
+            # Validate SQL
+            progress_bar.progress(20, text="Validating SQL query...")
+            sql_clean = sql.strip()
+            
+            # Add LIMIT if it's a SELECT query and max_rows is specified
+            if (max_rows > 0 and 
+                re.search(r'^\s*SELECT\b', sql_clean, re.IGNORECASE) and 
+                not re.search(r'\bLIMIT\b', sql_clean, re.IGNORECASE)):
+                if not sql_clean.endswith(';'):
+                    sql_clean += f' LIMIT {max_rows};'
+                else:
+                    sql_clean = sql_clean.rstrip(';') + f' LIMIT {max_rows};'
+            
+            # Execute query
+            progress_bar.progress(50, text="Executing query...")
+            result = db_manager.execute_query(sql_clean)
+            
+            progress_bar.progress(100, text="Query completed!")
+            
+            # Clear progress bar after a brief delay
+            time.sleep(0.5)
+            progress_bar.empty()
+            
+            # Handle results
+            if result.status == "success":
+                # Add to history
+                query_manager.add_to_history(result)
+                
+                # Success message
+                st.markdown(f"""
+                <div style="background-color: #d4edda; color: #155724; padding: 1rem; 
+                           border-radius: 0.5rem; border-left: 4px solid #28a745; margin: 1rem 0;">
+                    <strong>✅ Query executed successfully!</strong><br>
+                    📊 Returned {result.row_count:,} rows in {result.execution_time:.2f}s
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Display results
+                if result.data:
+                    df = pd.DataFrame(result.data)
+                    
+                    # Show metrics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Rows", f"{len(df):,}")
+                    with col2:
+                        st.metric("Columns", len(df.columns))
+                    with col3:
+                        st.metric("Execution Time", f"{result.execution_time:.3f}s")
+                    
+                    # Data table
+                    st.markdown("**📊 Query Results:**")
+                    if len(df) > 100:
+                        st.info(f"Showing first 100 rows of {len(df):,} total rows")
+                        st.dataframe(df.head(100), use_container_width=True)
+                    else:
+                        st.dataframe(df, use_container_width=True)
+                    
+                    # Export and visualization options
+                    col_download, col_viz, col_copy = st.columns(3)
+                    
+                    with col_download:
+                        csv_data = df.to_csv(index=False)
+                        st.download_button(
+                            "📥 Download CSV",
+                            csv_data,
+                            f"ai_query_result_{result.query_id}.csv",
+                            "text/csv"
+                        )
+                    
+                    with col_viz:
+                        if st.button("📈 Auto-Visualize", key="ai_viz_btn"):
+                            create_auto_visualization(df)
+                    
+                    with col_copy:
+                        if st.button("📋 Copy to SQL Editor", key="ai_copy_btn"):
+                            st.session_state['editor_sql'] = sql_clean
+                            st.success("Query copied to SQL Editor!")
+                
+                else:
+                    if result.row_count > 0:
+                        st.success(f"Query executed successfully! {result.row_count} rows affected.")
+                    else:
+                        st.info("Query executed successfully (no rows returned)")
+            
+            else:
+                # Error handling
+                st.markdown(f"""
+                <div style="background-color: #f8d7da; color: #721c24; padding: 1rem; 
+                           border-radius: 0.5rem; border-left: 4px solid #dc3545; margin: 1rem 0;">
+                    <strong>❌ Query execution failed</strong><br>
+                    <code>{result.error}</code>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Provide helpful suggestions
+                provide_error_suggestions(result.error)
+        
+        except Exception as e:
+            progress_bar.empty()
+            st.error(f"Unexpected error during query execution: {e}")
+            
+            # Debug information
+            with st.expander("🔍 Debug Information"):
+                st.code(f"Generated SQL:\n{sql}", language="sql")
+                st.text(f"Error: {str(e)}")
+
+
+def create_auto_visualization(df: pd.DataFrame):
+    """Create automatic visualization for query results"""
+    try:
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        categorical_cols = df.select_dtypes(include=['object', 'category', 'string']).columns.tolist()
+        
+        if not numeric_cols and not categorical_cols:
+            st.info("No suitable columns found for visualization")
+            return
+        
+        # Choose visualization type based on data
+        if len(numeric_cols) >= 2:
+            # Scatter plot for two numeric columns
+            fig = px.scatter(
+                df.head(1000), 
+                x=numeric_cols[0], 
+                y=numeric_cols[1],
+                title=f"{numeric_cols[1]} vs {numeric_cols[0]}"
+            )
+        elif len(numeric_cols) >= 1 and len(categorical_cols) >= 1:
+            # Bar chart for categorical vs numeric
+            if len(df) > 50:
+                sample_df = df.sample(n=min(50, len(df)))
+            else:
+                sample_df = df
+            
+            fig = px.bar(
+                sample_df, 
+                x=categorical_cols[0], 
+                y=numeric_cols[0],
+                title=f"{numeric_cols[0]} by {categorical_cols[0]}"
+            )
+            fig.update_xaxis(tickangle=45)
+        elif len(categorical_cols) >= 1:
+            # Pie chart for categorical data
+            value_counts = df[categorical_cols[0]].value_counts().head(10)
+            fig = px.pie(
+                values=value_counts.values, 
+                names=value_counts.index,
+                title=f"Distribution of {categorical_cols[0]}"
+            )
+        elif len(numeric_cols) >= 1:
+            # Histogram for single numeric column
+            fig = px.histogram(
+                df, 
+                x=numeric_cols[0],
+                title=f"Distribution of {numeric_cols[0]}"
+            )
+        else:
+            st.info("Unable to create visualization with available data types")
+            return
+        
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        
+    except Exception as e:
+        st.error(f"Visualization error: {e}")
+
+
+def explain_ai_query(sql: str):
+    """Explain the AI-generated SQL query in plain English"""
+    st.markdown("**📋 Query Explanation:**")
+    
+    # Basic SQL parsing to explain query components
+    sql_upper = sql.upper().strip()
+    
+    explanation_parts = []
+    
+    if sql_upper.startswith('SELECT'):
+        explanation_parts.append("📊 This is a **SELECT** query that retrieves data from the database")
+        
+        # Check for JOIN
+        if 'JOIN' in sql_upper:
+            explanation_parts.append("🔗 The query **joins multiple tables** to combine related data")
+        
+        # Check for WHERE
+        if 'WHERE' in sql_upper:
+            explanation_parts.append("🔍 It includes **filtering conditions** to narrow down the results")
+        
+        # Check for GROUP BY
+        if 'GROUP BY' in sql_upper:
+            explanation_parts.append("📈 The results are **grouped** to perform aggregation")
+        
+        # Check for ORDER BY
+        if 'ORDER BY' in sql_upper:
+            explanation_parts.append("📋 The results are **sorted** in a specific order")
+        
+        # Check for LIMIT
+        if 'LIMIT' in sql_upper:
+            explanation_parts.append("🎯 The number of results is **limited** to prevent overwhelming output")
+    
+    elif sql_upper.startswith('INSERT'):
+        explanation_parts.append("➕ This is an **INSERT** query that adds new data to the database")
+    
+    elif sql_upper.startswith('UPDATE'):
+        explanation_parts.append("✏️ This is an **UPDATE** query that modifies existing data")
+    
+    elif sql_upper.startswith('DELETE'):
+        explanation_parts.append("🗑️ This is a **DELETE** query that removes data from the database")
+    
+    for part in explanation_parts:
+        st.markdown(f"- {part}")
+    
+    # Show the formatted SQL
+    st.markdown("**SQL Code:**")
+    st.code(sql, language="sql")
+
+
+def provide_error_suggestions(error_message: str):
+    """Provide helpful suggestions based on error message"""
+    error_lower = error_message.lower() if error_message else ""
+    
+    suggestions = []
+    
+    if "does not exist" in error_lower:
+        suggestions.extend([
+            "🔍 Check if the table or column names are spelled correctly",
+            "📋 Use the Schema Explorer tab to see available tables and columns",
+            "🔧 Make sure you're connected to the correct database"
+        ])
+    
+    elif "syntax error" in error_lower:
+        suggestions.extend([
+            "📝 Check your SQL syntax - there might be a missing comma, quote, or bracket",
+            "🎨 Try using the Format SQL button to identify syntax issues",
+            "📚 Verify that column names with spaces are properly quoted"
+        ])
+    
+    elif "permission denied" in error_lower:
+        suggestions.extend([
+            "🔐 Your database user might not have sufficient permissions",
+            "👤 Contact your database administrator for access",
+            "🔑 Check if you're using the correct database credentials"
+        ])
+    
+    elif "connection" in error_lower:
+        suggestions.extend([
+            "🌐 Check your database connection settings",
+            "🔄 Try reconnecting to the database",
+            "⚡ Verify that the database server is running"
+        ])
+    
+    else:
+        suggestions.extend([
+            "🤖 Try rephrasing your natural language query",
+            "📝 Review the generated SQL for any obvious issues",
+            "🔍 Check the database schema to ensure the query matches your data structure"
+        ])
+    
+    if suggestions:
+        st.markdown("**💡 Suggestions:**")
+        for suggestion in suggestions:
+            st.markdown(f"- {suggestion}")
+
+
+def save_ai_query_to_favorites(query_manager: QueryManager, sql: str, nl_query: str):
+    """Save AI-generated query to favorites"""
+    with st.form("save_ai_query_form"):
+        st.markdown("**Save Query to Favorites**")
+        
+        # Suggest a name based on the natural language query
+        suggested_name = nl_query[:50] + "..." if len(nl_query) > 50 else nl_query
+        
+        query_name = st.text_input(
+            "Query Name",
+            value=suggested_name,
+            help="Enter a descriptive name for this query"
+        )
+        
+        query_description = st.text_area(
+            "Description (optional)",
+            value=f"AI-generated query from: {nl_query}",
+            help="Add any additional notes about this query"
+        )
+        
+        if st.form_submit_button("💾 Save Query"):
+            if query_name.strip():
+                query_manager.add_to_favorites(sql, query_name.strip())
+                st.success(f"✅ Query '{query_name}' saved to favorites!")
+            else:
+                st.warning("Please enter a query name")
 
 
 def render_schema_explorer(db_manager: DatabaseManager):
@@ -837,18 +1014,22 @@ def render_schema_explorer(db_manager: DatabaseManager):
 
 
 def render_sql_editor(db_manager: DatabaseManager, query_manager: QueryManager, settings: Dict):
-    """Render advanced SQL editor with syntax highlighting and execution"""
+    """Render advanced SQL editor"""
     st.markdown("### ⚡ Advanced SQL Editor")
     
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        # SQL Editor with syntax highlighting
+        # Get SQL from session state or use default
+        default_query = st.session_state.get('editor_sql', 
+                                           "SELECT * FROM information_schema.tables WHERE table_schema = 'public' LIMIT 10;")
+        
         sql_query = st.text_area(
             "SQL Query",
-            value="SELECT * FROM information_schema.tables WHERE table_schema = 'public' LIMIT 10;",
+            value=default_query,
             height=200,
-            help="Write your SQL query here. Use Ctrl+Enter to execute."
+            help="Write your SQL query here",
+            key="sql_editor_main"
         )
         
         # Query controls
@@ -856,618 +1037,249 @@ def render_sql_editor(db_manager: DatabaseManager, query_manager: QueryManager, 
         with col_a:
             execute_btn = st.button("▶️ Execute", type="primary")
         with col_b:
-            explain_btn = st.button("📋 Explain Plan")
+            if SQLPARSE_AVAILABLE and st.button("🎨 Format SQL"):
+                try:
+                    formatted_sql = sqlparse.format(sql_query, reindent=True, keyword_case='upper')
+                    st.session_state['editor_sql'] = formatted_sql
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error formatting SQL: {e}")
         with col_c:
-            format_btn = st.button("🎨 Format SQL")
+            if st.button("🗑️ Clear"):
+                st.session_state['editor_sql'] = ""
+                st.rerun()
         with col_d:
-            save_btn = st.button("💾 Save to Favorites")
+            if st.button("📋 Sample"):
+                st.session_state['editor_sql'] = "SELECT table_name, table_type FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;"
+                st.rerun()
     
     with col2:
         st.markdown("**Query Options**")
         max_rows = st.number_input("Max Rows", value=settings['max_rows'], min_value=1, key="sql_max_rows")
-        timeout = st.number_input("Timeout (s)", value=30, min_value=5, key="sql_timeout")
-        dry_run = st.checkbox("Dry Run (Explain Only)", help="Show execution plan without running query")
-    
-    # Format SQL
-    if format_btn and SQLPARSE_AVAILABLE:
-        try:
-            formatted_sql = sqlparse.format(sql_query, reindent=True, keyword_case='upper')
-            st.session_state['formatted_sql'] = formatted_sql
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error formatting SQL: {e}")
     
     # Execute query
     if execute_btn and sql_query.strip():
-        execute_sql_query(db_manager, query_manager, sql_query, max_rows, dry_run)
-    
-    # Explain plan
-    if explain_btn and sql_query.strip():
-        explain_query_plan(db_manager, sql_query)
-    
-    # Save to favorites
-    if save_btn and sql_query.strip():
-        with st.form("save_query_form"):
-            query_name = st.text_input("Query Name", placeholder="Enter a name for this query")
-            query_description = st.text_area("Description (optional)", placeholder="Describe what this query does")
-            
-            if st.form_submit_button("Save Query"):
-                if query_name:
-                    query_manager.add_to_favorites(sql_query, query_name)
-                    st.success(f"Query '{query_name}' saved to favorites!")
-                else:
-                    st.warning("Please enter a query name")
-    
-    # Show recent query history
-    st.markdown("---")
-    st.markdown("### 📚 Recent Queries")
-    
-    history = query_manager.get_history()
-    if history:
-        for i, query_data in enumerate(history[:5]):  # Show last 5 queries
-            with st.expander(f"Query {i+1}: {query_data['query_id']} ({query_data['status']})"):
-                col_x, col_y, col_z = st.columns([2, 1, 1])
-                with col_x:
-                    st.code(query_data['sql'][:200] + "..." if len(query_data['sql']) > 200 else query_data['sql'])
-                with col_y:
-                    st.metric("Rows", query_data['row_count'])
-                with col_z:
-                    st.metric("Time", f"{query_data['execution_time']:.2f}s")
-                
-                if st.button(f"Reuse Query {i+1}", key=f"reuse_{i}"):
-                    st.session_state['reused_query'] = query_data['sql']
-                    st.rerun()
-    else:
-        st.info("No query history available")
+        execute_regular_sql_query(db_manager, query_manager, sql_query, max_rows)
 
 
-def execute_sql_query(db_manager: DatabaseManager, query_manager: QueryManager, 
-                     sql: str, max_rows: int, dry_run: bool):
-    """Execute SQL query with comprehensive error handling"""
+def execute_regular_sql_query(db_manager: DatabaseManager, query_manager: QueryManager, sql: str, max_rows: int):
+    """Execute regular SQL query (non-AI generated)"""
+    
+    if not sql.strip():
+        st.warning("Please enter a SQL query")
+        return
+    
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     try:
-        if dry_run:
-            explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"
-            result = db_manager.execute_query(explain_sql)
-            
-            if result.status == "success" and result.data:
-                st.markdown("**🔍 Query Execution Plan:**")
-                plan_data = result.data[0]['QUERY PLAN'][0] if result.data[0].get('QUERY PLAN') else {}
-                
-                if plan_data:
-                    st.json(plan_data)
-                    
-                    # Extract key metrics
-                    if 'Execution Time' in plan_data:
-                        st.metric("Estimated Execution Time", f"{plan_data['Execution Time']:.2f}ms")
-        else:
-            with st.spinner("Executing query..."):
-                # Add LIMIT if not present and not a modification query
-                limited_sql = sql
-                if max_rows and not re.search(r'\bLIMIT\b', sql, re.IGNORECASE):
-                    if re.search(r'^\s*SELECT\b', sql.strip(), re.IGNORECASE):
-                        limited_sql = f"{sql.rstrip(';')} LIMIT {max_rows}"
-                
-                result = db_manager.execute_query(limited_sql)
-                
-                if result.status == "success":
-                    query_manager.add_to_history(result)
-                    
-                    # Success metrics
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Rows Returned", result.row_count)
-                    with col2:
-                        st.metric("Execution Time", f"{result.execution_time:.3f}s")
-                    with col3:
-                        st.metric("Query ID", result.query_id)
-                    
-                    # Display results
-                    if result.data:
-                        df = pd.DataFrame(result.data)
-                        
-                        # Results table with download option
-                        st.markdown("**📊 Query Results:**")
-                        st.dataframe(df, use_container_width=True)
-                        
-                        # Export options
-                        col_export1, col_export2, col_export3 = st.columns(3)
-                        with col_export1:
-                            csv = df.to_csv(index=False)
-                            st.download_button("📥 Download CSV", csv, f"query_result_{result.query_id}.csv", "text/csv")
-                        with col_export2:
-                            json_str = df.to_json(orient='records', indent=2)
-                            st.download_button("📥 Download JSON", json_str, f"query_result_{result.query_id}.json", "application/json")
-                        with col_export3:
-                            if st.button("📈 Create Visualization"):
-                                fig = DataVisualizer.create_auto_chart(df)
-                                if fig.data:
-                                    st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.success("Query executed successfully (no results returned)")
-                
-                else:
-                    st.markdown(f"""
-                    <div class="error-box">
-                        <strong>❌ Query Execution Failed</strong><br>
-                        <code>{result.error}</code><br>
-                        <small>Execution time: {result.execution_time:.3f}s</small>
-                    </div>
-                    """, unsafe_allow_html=True)
-    
-    except Exception as e:
-        st.error(f"Unexpected error: {e}")
-
-
-def explain_query_plan(db_manager: DatabaseManager, sql: str):
-    """Show detailed query execution plan"""
-    try:
-        explain_sql = f"EXPLAIN (ANALYZE FALSE, VERBOSE TRUE, BUFFERS FALSE, FORMAT TEXT) {sql}"
-        result = db_manager.execute_query(explain_sql)
+        status_text.text("Validating query...")
+        progress_bar.progress(20)
         
-        if result.status == "success" and result.data:
-            st.markdown("**📋 Query Execution Plan:**")
-            plan_text = "\n".join([row.get('QUERY PLAN', '') for row in result.data])
-            st.code(plan_text, language="text")
-            
-            # Performance suggestions
-            st.markdown("**💡 Optimization Suggestions:**")
-            suggestions = analyze_query_plan(plan_text)
-            for suggestion in suggestions:
-                st.info(suggestion)
-    
-    except Exception as e:
-        st.error(f"Error generating execution plan: {e}")
-
-
-def analyze_query_plan(plan_text: str) -> List[str]:
-    """Analyze query plan and provide optimization suggestions"""
-    suggestions = []
-    
-    if "Seq Scan" in plan_text:
-        suggestions.append("🔍 Consider adding indexes to avoid sequential scans")
-    
-    if "cost=" in plan_text:
-        # Extract cost estimates
-        import re
-        costs = re.findall(r'cost=(\d+\.\d+)', plan_text)
-        if costs and float(costs[0]) > 1000:
-            suggestions.append("💰 High query cost detected - consider query optimization")
-    
-    if "Nested Loop" in plan_text:
-        suggestions.append("🔄 Nested loops detected - verify join conditions and indexes")
-    
-    if "Hash Join" in plan_text:
-        suggestions.append("⚡ Hash joins are generally efficient for large datasets")
-    
-    if not suggestions:
-        suggestions.append("✅ Query plan looks reasonable")
-    
-    return suggestions
-
-
-def render_analytics_dashboard(db_manager: DatabaseManager, visualizer: DataVisualizer, settings: Dict):
-    """Render comprehensive analytics dashboard"""
-    st.markdown("### 📊 Data Analytics Dashboard")
-    
-    # Quick analytics queries
-    st.markdown("**🚀 Quick Analytics**")
-    
-    analytics_options = {
-        "Table Sizes": """
-            SELECT 
-                schemaname,
-                tablename,
-                pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size,
-                pg_total_relation_size(schemaname||'.'||tablename) as size_bytes
-            FROM pg_tables 
-            WHERE schemaname NOT IN ('information_schema', 'pg_catalog')
-            ORDER BY size_bytes DESC
-            LIMIT 10
-        """,
-        "Database Activity": """
-            SELECT 
-                datname,
-                numbackends as active_connections,
-                xact_commit as transactions_committed,
-                xact_rollback as transactions_rolled_back,
-                blks_read as blocks_read,
-                blks_hit as blocks_hit,
-                round((blks_hit::float / (blks_hit + blks_read)) * 100, 2) as cache_hit_ratio
-            FROM pg_stat_database 
-            WHERE datname = current_database()
-        """,
-        "Lock Information": """
-            SELECT 
-                mode,
-                count(*) as lock_count
-            FROM pg_locks 
-            GROUP BY mode
-            ORDER BY lock_count DESC
-        """,
-        "Index Usage": """
-            SELECT 
-                schemaname,
-                tablename,
-                indexname,
-                idx_scan as index_scans,
-                idx_tup_read as tuples_read,
-                idx_tup_fetch as tuples_fetched
-            FROM pg_stat_user_indexes
-            ORDER BY idx_scan DESC
-            LIMIT 15
-        """
-    }
-    
-    selected_analytics = st.selectbox("Choose Analytics Query", list(analytics_options.keys()))
-    
-    if st.button(f"🔍 Run {selected_analytics} Analysis"):
-        try:
-            with st.spinner("Running analytics..."):
-                result = db_manager.execute_query(analytics_options[selected_analytics])
-                
-                if result.status == "success" and result.data:
-                    df = pd.DataFrame(result.data)
-                    
-                    # Display data
-                    st.dataframe(df, use_container_width=True)
-                    
-                    # Create visualizations
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        chart_type = st.selectbox("Chart Type", ["auto", "bar", "line", "pie", "scatter"])
-                        fig = visualizer.create_auto_chart(df, chart_type)
-                        if fig.data:
-                            st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col2:
-                        # Data insights
-                        st.markdown("**📈 Key Insights:**")
-                        
-                        if selected_analytics == "Table Sizes":
-                            total_size = df['size_bytes'].sum() if 'size_bytes' in df.columns else 0
-                            st.metric("Total Size", f"{total_size / (1024**3):.2f} GB" if total_size > 0 else "N/A")
-                            
-                            if len(df) > 0 and 'size_bytes' in df.columns:
-                                largest_table = df.loc[df['size_bytes'].idxmax()]
-                                st.info(f"Largest table: {largest_table.get('tablename', 'N/A')}")
-                        
-                        elif selected_analytics == "Database Activity":
-                            if 'cache_hit_ratio' in df.columns and len(df) > 0:
-                                hit_ratio = df['cache_hit_ratio'].iloc[0] if not pd.isna(df['cache_hit_ratio'].iloc[0]) else 0
-                                st.metric("Cache Hit Ratio", f"{hit_ratio:.1f}%")
-                                if hit_ratio < 95:
-                                    st.warning("Low cache hit ratio - consider increasing shared_buffers")
-                                else:
-                                    st.success("Good cache performance!")
-                
-                else:
-                    st.error(f"Analytics query failed: {result.error if result.error else 'Unknown error'}")
+        sql_clean = sql.strip()
+        if not sql_clean.endswith(';'):
+            sql_clean += ';'
         
-        except Exception as e:
-            st.error(f"Error running analytics: {e}")
-    
-    # Custom analytics
-    st.markdown("---")
-    st.markdown("**🎯 Custom Analytics Query**")
-    
-    custom_sql = st.text_area(
-        "Enter your analytics query:",
-        placeholder="SELECT column, COUNT(*) FROM table GROUP BY column ORDER BY COUNT(*) DESC",
-        height=100
-    )
-    
-    if st.button("🚀 Run Custom Analytics") and custom_sql.strip():
-        try:
-            result = db_manager.execute_query(custom_sql)
+        status_text.text("Executing query...")
+        progress_bar.progress(50)
+        
+        # Add LIMIT if it's a SELECT query without LIMIT
+        if (max_rows > 0 and 
+            re.search(r'^\s*SELECT\b', sql_clean, re.IGNORECASE) and 
+            not re.search(r'\bLIMIT\b', sql_clean, re.IGNORECASE)):
+            sql_clean = sql_clean.rstrip(';') + f' LIMIT {max_rows};'
+        
+        result = db_manager.execute_query(sql_clean)
+        
+        progress_bar.progress(100)
+        status_text.text("Query completed!")
+        
+        # Clear progress indicators
+        time.sleep(0.5)
+        progress_bar.empty()
+        status_text.empty()
+        
+        # Display results
+        if result.status == "success":
+            query_manager.add_to_history(result)
             
-            if result.status == "success" and result.data:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Rows Returned", f"{result.row_count:,}")
+            with col2:
+                st.metric("Execution Time", f"{result.execution_time:.3f}s")
+            with col3:
+                st.metric("Query ID", result.query_id)
+            
+            if result.data:
                 df = pd.DataFrame(result.data)
+                st.success(f"Query executed successfully! Returned {result.row_count} rows.")
                 
-                col1, col2 = st.columns([2, 1])
-                with col1:
+                if len(df) > 100:
+                    st.info(f"Showing first 100 rows of {len(df)} total rows")
+                    st.dataframe(df.head(100), use_container_width=True)
+                else:
                     st.dataframe(df, use_container_width=True)
                 
-                with col2:
-                    chart_type = st.selectbox("Visualization", ["auto", "bar", "line", "pie", "scatter"], key="custom_viz")
-                    
-                    if st.button("📊 Generate Chart"):
-                        fig = visualizer.create_auto_chart(df, chart_type)
-                        if fig.data:
-                            st.plotly_chart(fig, use_container_width=True)
-            
+                # Export options
+                col_export1, col_export2, col_export3 = st.columns(3)
+                with col_export1:
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        "📥 Download CSV", 
+                        csv, 
+                        f"query_result_{result.query_id}.csv", 
+                        "text/csv"
+                    )
+                with col_export2:
+                    json_str = df.to_json(orient='records', indent=2)
+                    st.download_button(
+                        "📥 Download JSON", 
+                        json_str, 
+                        f"query_result_{result.query_id}.json", 
+                        "application/json"
+                    )
+                with col_export3:
+                    if st.button("📈 Create Visualization"):
+                        create_auto_visualization(df)
             else:
-                st.error(f"Query failed: {result.error}")
-        
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-
-def render_performance_dashboard(db_manager: DatabaseManager, visualizer: DataVisualizer):
-    """Render database performance monitoring dashboard"""
-    st.markdown("### 📈 Performance Monitoring")
-    
-    # Performance metrics
-    try:
-        stats = db_manager.get_query_performance_stats()
-        
-        # Create performance visualizations
-        performance_charts = visualizer.create_performance_dashboard(stats)
-        
-        if performance_charts:
-            for i, chart in enumerate(performance_charts):
-                st.plotly_chart(chart, use_container_width=True, key=f"perf_chart_{i}")
-        
-        # Real-time monitoring
-        st.markdown("**🔄 Real-time Monitoring**")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🔄 Refresh Stats"):
-                st.rerun()
-        
-        with col2:
-            auto_refresh = st.checkbox("Auto-refresh (30s)")
-        
-        with col3:
-            if st.button("📊 Full Health Check"):
-                run_health_check(db_manager)
-        
-        # Current connections
-        st.markdown("**🔗 Current Connections**")
-        connections_sql = """
-            SELECT 
-                pid,
-                usename as username,
-                application_name,
-                client_addr,
-                state,
-                query_start,
-                left(query, 50) as current_query
-            FROM pg_stat_activity 
-            WHERE state != 'idle'
-            ORDER BY query_start DESC
-        """
-        
-        conn_result = db_manager.execute_query(connections_sql)
-        if conn_result.status == "success" and conn_result.data:
-            conn_df = pd.DataFrame(conn_result.data)
-            st.dataframe(conn_df, use_container_width=True)
-        
-        # Slow queries
-        st.markdown("**🐌 Long Running Queries**")
-        slow_queries_sql = """
-            SELECT 
-                pid,
-                now() - pg_stat_activity.query_start AS duration,
-                query,
-                state
-            FROM pg_stat_activity
-            WHERE (now() - pg_stat_activity.query_start) > interval '5 minutes'
-            ORDER BY duration DESC
-        """
-        
-        slow_result = db_manager.execute_query(slow_queries_sql)
-        if slow_result.status == "success" and slow_result.data:
-            if slow_result.data:
-                slow_df = pd.DataFrame(slow_result.data)
-                st.dataframe(slow_df, use_container_width=True)
-                st.warning(f"Found {len(slow_result.data)} long-running queries")
-            else:
-                st.success("No long-running queries detected")
-        
-    except Exception as e:
-        st.error(f"Error loading performance data: {e}")
-
-
-def run_health_check(db_manager: DatabaseManager):
-    """Run comprehensive database health check"""
-    st.markdown("**🏥 Database Health Check Results**")
-    
-    health_checks = {
-        "Database Size": "SELECT pg_size_pretty(pg_database_size(current_database())) as size",
-        "Connection Count": "SELECT count(*) as connections FROM pg_stat_activity",
-        "Cache Hit Ratio": """
-            SELECT round((sum(blks_hit) / sum(blks_hit + blks_read)) * 100, 2) as cache_hit_ratio
-            FROM pg_stat_database WHERE datname = current_database()
-        """,
-        "Unused Indexes": """
-            SELECT schemaname, tablename, indexname 
-            FROM pg_stat_user_indexes 
-            WHERE idx_scan = 0 AND schemaname = 'public'
-            LIMIT 5
-        """,
-        "Table Bloat": """
-            SELECT schemaname, tablename, n_dead_tup as dead_tuples
-            FROM pg_stat_user_tables 
-            WHERE n_dead_tup > 1000
-            ORDER BY n_dead_tup DESC
-            LIMIT 5
-        """
-    }
-    
-    for check_name, sql in health_checks.items():
-        try:
-            result = db_manager.execute_query(sql)
-            
-            if result.status == "success":
-                if result.data:
-                    with st.expander(f"✅ {check_name}"):
-                        if PANDAS_AVAILABLE:
-                            df = pd.DataFrame(result.data)
-                            st.dataframe(df, use_container_width=True)
-                        else:
-                            for i, row in enumerate(result.data):
-                                st.write(f"Row {i+1}:", {k: str(v) for k, v in row.items()})
-                        
-                        # Specific recommendations
-                        if check_name == "Cache Hit Ratio" and result.data and 'cache_hit_ratio' in result.data[0]:
-                            ratio = result.data[0]['cache_hit_ratio'] or 0
-                            if ratio < 95:
-                                st.warning(f"Cache hit ratio is {ratio}% - consider increasing shared_buffers")
-                        
-                        elif check_name == "Unused Indexes" and len(result.data) > 0:
-                            st.info(f"Found {len(result.data)} potentially unused indexes")
-                        
-                        elif check_name == "Table Bloat" and len(result.data) > 0:
-                            st.warning(f"Found {len(result.data)} tables with significant bloat - consider VACUUM ANALYZE")
+                if result.row_count > 0:
+                    st.success(f"Query executed successfully! {result.row_count} rows affected.")
                 else:
-                    st.success(f"✅ {check_name}: No issues found")
-            else:
-                st.error(f"❌ {check_name}: {result.error}")
+                    st.success("Query executed successfully! (No rows returned)")
         
-        except Exception as e:
-            st.error(f"❌ {check_name}: {e}")
+        else:
+            st.error(f"Query failed: {result.error}")
+            provide_error_suggestions(result.error)
+    
+    except Exception as e:
+        progress_bar.empty()
+        status_text.empty()
+        st.error(f"Unexpected error: {e}")
 
 
 def render_favorites_manager(db_manager: DatabaseManager, query_manager: QueryManager, settings: Dict):
     """Render favorites and query management interface"""
-    st.markdown("### ⭐ Query Favorites & Templates")
+    st.markdown("### ⭐ Query Favorites & History")
     
-    favorites = query_manager.get_favorites()
+    tab1, tab2 = st.tabs(["⭐ Favorites", "📚 History"])
     
-    # Add sample queries if no favorites exist
-    if not favorites:
-        sample_queries = [
-            {
-                "name": "Table Overview",
-                "sql": """SELECT 
-    schemaname,
-    tablename,
-    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-FROM pg_tables 
-WHERE schemaname = 'public'
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;""",
-                "description": "Get overview of all tables with sizes"
-            },
-            {
-                "name": "Active Connections",
-                "sql": """SELECT 
-    pid,
-    usename,
-    application_name,
-    client_addr,
-    state,
-    query_start
-FROM pg_stat_activity 
-WHERE state = 'active'
-ORDER BY query_start DESC;""",
-                "description": "Show all active database connections"
-            },
-            {
-                "name": "Index Usage Stats",
-                "sql": """SELECT 
-    schemaname,
-    tablename,
-    indexname,
-    idx_scan,
-    idx_tup_read,
-    idx_tup_fetch
-FROM pg_stat_user_indexes
-WHERE idx_scan > 0
-ORDER BY idx_scan DESC
-LIMIT 20;""",
-                "description": "Most used indexes in the database"
-            }
-        ]
+    with tab1:
+        favorites = query_manager.get_favorites()
         
-        st.info("No favorites yet. Here are some useful templates to get you started:")
-        
-        for query in sample_queries:
-            with st.expander(f"📋 {query['name']}"):
-                st.code(query['sql'], language="sql")
-                st.caption(query['description'])
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button(f"⭐ Add to Favorites", key=f"fav_{query['name']}"):
-                        query_manager.add_to_favorites(query['sql'], query['name'])
-                        st.success(f"Added '{query['name']}' to favorites!")
-                        st.rerun()
-                
-                with col2:
-                    if st.button(f"▶️ Execute", key=f"exec_{query['name']}"):
-                        execute_sql_query(db_manager, query_manager, query['sql'], settings['max_rows'], False)
-    
-    else:
-        st.success(f"You have {len(favorites)} saved queries")
-        
-        # Favorites list
-        for i, fav in enumerate(favorites):
-            with st.expander(f"⭐ {fav['name']}"):
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.code(fav['sql'], language="sql")
-                    if fav.get('description'):
-                        st.caption(fav['description'])
-                
-                with col2:
-                    if st.button("▶️ Execute", key=f"exec_fav_{i}"):
-                        execute_sql_query(db_manager, query_manager, fav['sql'], settings['max_rows'], False)
+        if not favorites:
+            st.info("No favorite queries yet. Save queries from the AI Query or SQL Editor tabs.")
+        else:
+            st.success(f"You have {len(favorites)} saved queries")
+            
+            for i, fav in enumerate(favorites):
+                with st.expander(f"⭐ {fav['name']}"):
+                    col1, col2 = st.columns([3, 1])
                     
-                    if st.button("📋 Copy to Editor", key=f"copy_fav_{i}"):
-                        st.session_state['editor_sql'] = fav['sql']
-                        st.success("Copied to SQL editor!")
+                    with col1:
+                        st.code(fav['sql'], language="sql")
                     
-                    if st.button("🗑️ Delete", key=f"del_fav_{i}"):
-                        st.session_state.favorite_queries.pop(i)
-                        st.success("Query deleted!")
-                        st.rerun()
+                    with col2:
+                        if st.button("▶️ Execute", key=f"exec_fav_{i}"):
+                            execute_regular_sql_query(db_manager, query_manager, fav['sql'], settings['max_rows'])
+                        
+                        if st.button("📋 Copy to Editor", key=f"copy_fav_{i}"):
+                            st.session_state['editor_sql'] = fav['sql']
+                            st.success("Copied to SQL editor!")
+                        
+                        if st.button("🗑️ Delete", key=f"del_fav_{i}"):
+                            st.session_state.favorite_queries.pop(i)
+                            st.success("Query deleted!")
+                            st.rerun()
     
-    # Export/Import favorites
-    st.markdown("---")
-    st.markdown("**💾 Backup & Restore**")
+    with tab2:
+        history = query_manager.get_history()
+        
+        if not history:
+            st.info("No query history available")
+        else:
+            st.info(f"Showing last {min(10, len(history))} queries")
+            
+            for i, query_data in enumerate(history[:10]):
+                with st.expander(f"Query {i+1}: {query_data['query_id']} ({query_data['status']})"):
+                    col_x, col_y, col_z = st.columns([2, 1, 1])
+                    with col_x:
+                        st.code(query_data['sql'][:200] + "..." if len(query_data['sql']) > 200 else query_data['sql'])
+                    with col_y:
+                        st.metric("Rows", query_data['row_count'])
+                    with col_z:
+                        st.metric("Time", f"{query_data['execution_time']:.2f}s")
+                    
+                    if st.button(f"Reuse Query {i+1}", key=f"reuse_{i}"):
+                        st.session_state['editor_sql'] = query_data['sql']
+                        st.success("Query copied to SQL editor!")
+
+
+def render_main_dashboard(db_manager: DatabaseManager, settings: Dict):
+    """Render the main application dashboard"""
     
-    col1, col2 = st.columns(2)
+    # Header with metrics
+    col1, col2, col3, col4 = st.columns(4)
     
-    with col1:
-        if st.button("📤 Export Favorites"):
-            if favorites:
-                export_data = json.dumps(favorites, indent=2, default=str)
-                st.download_button(
-                    "📥 Download Favorites.json",
-                    export_data,
-                    "favorites.json",
-                    "application/json"
-                )
-            else:
-                st.warning("No favorites to export")
+    try:
+        # Get basic database info
+        db_info = db_manager.execute_query("SELECT version() as version")
+        db_size = db_manager.execute_query("SELECT pg_size_pretty(pg_database_size(current_database())) as size")
+        table_count = db_manager.execute_query("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_schema = 'public'")
+        
+        with col1:
+            st.metric("Database Status", "🟢 Connected", "Healthy")
+        with col2:
+            st.metric("Database Size", db_size.data[0]['size'] if db_size.data else "Unknown")
+        with col3:
+            st.metric("Tables", table_count.data[0]['count'] if table_count.data else "0")
+        with col4:
+            st.metric("AI Provider", settings['ai_provider'])
     
-    with col2:
-        uploaded_file = st.file_uploader("📤 Import Favorites", type=['json'])
-        if uploaded_file:
-            try:
-                import_data = json.load(uploaded_file)
-                st.session_state.favorite_queries.extend(import_data)
-                st.success(f"Imported {len(import_data)} queries!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Import failed: {e}")
+    except Exception as e:
+        st.error(f"Failed to load database metrics: {e}")
+    
+    # Main navigation
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🤖 AI Query", "📋 Schema Explorer", "⚡ SQL Editor", "⭐ Favorites & History"
+    ])
+    
+    # Initialize components
+    ai_generator = AIQueryGenerator()
+    query_manager = QueryManager()
+    
+    with tab1:
+        render_ai_query_interface(db_manager, ai_generator, query_manager, settings)
+    
+    with tab2:
+        render_schema_explorer(db_manager)
+    
+    with tab3:
+        render_sql_editor(db_manager, query_manager, settings)
+    
+    with tab4:
+        render_favorites_manager(db_manager, query_manager, settings)
 
 
 def main():
-    """Main application entry point with enhanced branding"""
-    
-    # Page configuration with custom favicon
+    """Main application entry point"""
     st.set_page_config(
         page_title="PostgreSQL MCP Server Pro | By Prashant Khadayate",
         page_icon="🐘",
         layout="wide",
-        initial_sidebar_state="expanded",
-        menu_items={
-            'Get Help': 'https://github.com/prashant-khadayate/postgresql-mcp-server',
-            'Report a bug': "https://github.com/prashant-khadayate/postgresql-mcp-server/issues",
-            'About': "# PostgreSQL MCP Server Pro\n**Created by Prashant Khadayate**\n\nEnterprise-grade PostgreSQL management with AI assistance."
-        }
+        initial_sidebar_state="expanded"
     )
     
     # Professional theme setup
     setup_professional_theme()
     
-    # Render branded header
-    render_branded_header()
+    # Header
+    st.markdown("""
+    # 🐘 PostgreSQL MCP Server Pro
+    ### *Enterprise-Grade Database Management & AI-Powered Analytics*
+    
+    ---
+    """)
     
     # Connection sidebar
     conn_str, settings = render_connection_sidebar()
@@ -1493,17 +1305,17 @@ def main():
             ### 🤖 AI-Powered Queries
             - Natural language to SQL conversion
             - Smart query optimization
-            - Multiple AI providers support
             - Real-time streaming responses
+            - Query explanation and debugging
             """)
         
         with col2:
             st.markdown("""
             ### 📊 Advanced Analytics
             - Interactive data visualizations
-            - Performance monitoring
-            - Query profiling & optimization
-            - Real-time database metrics
+            - Automatic chart generation
+            - Export capabilities (CSV, JSON)
+            - Schema exploration tools
             """)
         
         with col3:
@@ -1512,34 +1324,14 @@ def main():
             - Secure connection management
             - Query history & favorites
             - Professional UI/UX
-            - Export capabilities
+            - Progress tracking & feedback
             """)
-        
-        # Technology showcase
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align: center; padding: 2rem;">
-            <h3 style="color: #667eea; margin-bottom: 1rem;">🚀 Powered by Modern Technology Stack</h3>
-            <div style="font-size: 1.1rem; color: #666;">
-                <span style="margin: 0 1rem;">🐘 <strong>PostgreSQL</strong></span>
-                <span style="margin: 0 1rem;">🤖 <strong>OpenAI GPT-4</strong></span>
-                <span style="margin: 0 1rem;">⚡ <strong>Streamlit</strong></span>
-                <span style="margin: 0 1rem;">📊 <strong>Plotly</strong></span>
-                <span style="margin: 0 1rem;">🐍 <strong>Python</strong></span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
         
         return
     
     # Initialize database manager
     try:
         db_manager = DatabaseManager(conn_str)
-        
-        # Test connection with loading animation
-        with st.spinner("🔄 Establishing database connection..."):
-            with db_manager.get_connection():
-                pass  # Connection successful
         
         # Connection success message
         st.markdown("""
@@ -1552,56 +1344,18 @@ def main():
         # Render main dashboard
         render_main_dashboard(db_manager, settings)
         
-        # Enhanced footer with creator credits
+        # Footer
         st.markdown("---")
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #f8f9ff 0%, #e8f2ff 100%); 
-                    padding: 2rem; border-radius: 15px; text-align: center; 
-                    margin-top: 3rem; border: 1px solid rgba(102, 126, 234, 0.1);">
-            
-            <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; flex-wrap: wrap;">
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">🐘 PostgreSQL MCP Server Pro</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #666;">Enterprise-Grade Database Management Platform</p>
-                </div>
-                
-                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
-                
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">👨‍💻 Created by</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #333; font-weight: 600;">Prashant Khadayate</p>
-                </div>
-                
-                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
-                
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">🚀 Version</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #666;">2.0.0 Professional</p>
-                </div>
-            </div>
-            
-            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid rgba(102, 126, 234, 0.2);">
-                <p style="margin: 0; color: #888; font-size: 0.9rem;">
-                    Built with ❤️ using 
-                    <strong>Streamlit</strong> • <strong>PostgreSQL</strong> • <strong>OpenAI</strong> • <strong>Python</strong>
-                </p>
-                <div style="margin-top: 1rem;">
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">📖 Documentation</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">🐛 Report Issues</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">⭐ GitHub</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">💬 Support</a>
-                </div>
-            </div>
+        <div style="text-align: center; color: #666; padding: 20px;">
+            <p>🚀 <strong>PostgreSQL MCP Server Pro v2.0.1</strong> | 
+            Built with ❤️ using Streamlit | 
+            Created by <strong>Prashant Khadayate</strong></p>
         </div>
         """, unsafe_allow_html=True)
     
     except Exception as e:
-        st.markdown(f"""
-        <div class="error-box">
-            <h3>❌ Database Connection Failed</h3>
-            <p><strong>Error:</strong> {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.error(f"Failed to connect to database: {e}")
         
         # Troubleshooting guide
         with st.expander("🔧 Troubleshooting Guide", expanded=True):
@@ -1624,19 +1378,16 @@ def main():
                - Check if user has necessary permissions
                - Confirm database name exists
             
-            4. **🛡️ SSL/Security Settings**
-               - Add `?sslmode=require` for secure connections
-               - Use `?sslmode=disable` for local development
+            4. **📦 Missing Dependencies**
+               ```bash
+               pip install psycopg[binary] pandas plotly streamlit openai sqlparse
+               ```
             
-            5. **🚀 Cloud Database Tips**
-               - Check if your IP is whitelisted
-               - Verify connection limits aren't exceeded
-               - Confirm SSL requirements
+            5. **🤖 OpenAI API Key**
+               ```bash
+               export OPENAI_API_KEY="your-api-key-here"
+               ```
             """)
-        
-        st.info("""
-        **💡 Pro Tip:** Use the sidebar connection tester to validate your settings before proceeding.
-        """)
 
 
 if __name__ == "__main__":
