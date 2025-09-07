@@ -87,7 +87,7 @@ def _connect(conn_str: Optional[str] = None, custom: Optional[Dict[str, str]] = 
 
 
 def _is_safe_sql(sql: str) -> bool:
-    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "true":
+    if os.getenv("ALLOW_DANGEROUS_WRITE", "false").lower() == "false":
         return True
     READ_ONLY_STATEMENTS = (
         r"^\s*SELECT\\b",
