@@ -1,197 +1,4 @@
-def main():
-    """Main application entry point with enhanced branding"""
-    
-    # Page configuration with custom favicon
-    st.set_page_config(
-        page_title="PostgreSQL MCP Server Pro | By Prashant Khadayate",
-        page_icon="🐘",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        menu_items={
-            'Get Help': 'https://github.com/prashant-khadayate/postgresql-mcp-server',
-            'Report a bug': "https://github.com/prashant-khadayate/postgresql-mcp-server/issues",
-            'About': "# PostgreSQL MCP Server Pro\n**Created by Prashant Khadayate**\n\nEnterprise-grade PostgreSQL management with AI assistance."
-        }
-    )
-    
-    # Professional theme setup
-    setup_professional_theme()
-    
-    # Render branded header
-    render_branded_header()
-    
-    # Connection sidebar
-    conn_str, settings = render_connection_sidebar()
-    
-    if not conn_str:
-        st.markdown("""
-        <div class="info-box">
-            <h3>🚀 Welcome to PostgreSQL MCP Server Pro!</h3>
-            <p><strong>Get started in 3 simple steps:</strong></p>
-            <ol>
-                <li>🔗 Enter your PostgreSQL connection details in the sidebar</li>
-                <li>🔍 Test your connection to ensure everything works</li>
-                <li>🤖 Start exploring your database with AI assistance!</li>
-            </ol>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Feature showcase
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.markdown("""
-            ### 🤖 AI-Powered Queries
-            - Natural language to SQL conversion
-            - Smart query optimization
-            - Multiple AI providers support
-            - Real-time streaming responses
-            """)
-        
-        with col2:
-            st.markdown("""
-            ### 📊 Advanced Analytics
-            - Interactive data visualizations
-            - Performance monitoring
-            - Query profiling & optimization
-            - Real-time database metrics
-            """)
-        
-        with col3:
-            st.markdown("""
-            ### 🔐 Enterprise Features
-            - Secure connection management
-            - Query history & favorites
-            - Professional UI/UX
-            - Export capabilities
-            """)
-        
-        # Technology showcase
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align: center; padding: 2rem;">
-            <h3 style="color: #667eea; margin-bottom: 1rem;">🚀 Powered by Modern Technology Stack</h3>
-            <div style="font-size: 1.1rem; color: #666;">
-                <span style="margin: 0 1rem;">🐘 <strong>PostgreSQL</strong></span>
-                <span style="margin: 0 1rem;">🤖 <strong>OpenAI GPT-4</strong></span>
-                <span style="margin: 0 1rem;">⚡ <strong>Streamlit</strong></span>
-                <span style="margin: 0 1rem;">📊 <strong>Plotly</strong></span>
-                <span style="margin: 0 1rem;">🐍 <strong>Python</strong></span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        return
-    
-    # Initialize database manager
-    try:
-        db_manager = DatabaseManager(conn_str)
-        
-        # Test connection with loading animation
-        with st.spinner("🔄 Establishing database connection..."):
-            with db_manager.get_connection():
-                pass  # Connection successful
-        
-        # Connection success message
-        st.markdown("""
-        <div class="success-box" style="margin-bottom: 2rem;">
-            <strong>🎉 Successfully connected to your PostgreSQL database!</strong><br>
-            Ready to explore your data with AI-powered assistance.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Render main dashboard
-        render_main_dashboard(db_manager, settings)
-        
-        # Enhanced footer with creator credits
-        st.markdown("---")
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #f8f9ff 0%, #e8f2ff 100%); 
-                    padding: 2rem; border-radius: 15px; text-align: center; 
-                    margin-top: 3rem; border: 1px solid rgba(102, 126, 234, 0.1);">
-            
-            <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; flex-wrap: wrap;">
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">🐘 PostgreSQL MCP Server Pro</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #666;">Enterprise-Grade Database Management Platform</p>
-                </div>
-                
-                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
-                
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">👨‍💻 Created by</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #333; font-weight: 600;">Prashant Khadayate</p>
-                </div>
-                
-                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
-                
-                <div>
-                    <h4 style="color: #667eea; margin: 0;">🚀 Version</h4>
-                    <p style="margin: 0.5rem 0 0 0; color: #666;">2.0.0 Professional</p>
-                </div>
-            </div>
-            
-            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid rgba(102, 126, 234, 0.2);">
-                <p style="margin: 0; color: #888; font-size: 0.9rem;">
-                    Built with ❤️ using 
-                    <strong>Streamlit</strong> • <strong>PostgreSQL</strong> • <strong>OpenAI</strong> • <strong>Python</strong>
-                </p>
-                <div style="margin-top: 1rem;">
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">📖 Documentation</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">🐛 Report Issues</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">⭐ GitHub</a>
-                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">💬 Support</a>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    except Exception as e:
-        st.markdown(f"""
-        <div class="error-box">
-            <h3>❌ Database Connection Failed</h3>
-            <p><strong>Error:</strong> {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Troubleshooting guide
-        with st.expander("🔧 Troubleshooting Guide", expanded=True):
-            st.markdown("""
-            **Common Connection Issues & Solutions:**
-            
-            1. **🔌 Connection String Format**
-               ```
-               postgresql://username:password@host:port/database
-               ```
-               Example: `postgresql://postgres:mypass@localhost:5432/mydb`
-            
-            2. **🌐 Network Issues**
-               - Verify the database server is running
-               - Check if the host and port are correct
-               - Ensure firewall allows connections
-            
-            3. **🔐 Authentication Problems**
-               - Verify username and password
-               - Check if user has necessary permissions
-               - Confirm database name exists
-            
-            4. **🛡️ SSL/Security Settings**
-               - Add `?sslmode=require` for secure connections
-               - Use `?sslmode=disable` for local development
-            
-            5. **🚀 Cloud Database Tips**
-               - Check if your IP is whitelisted
-               - Verify connection limits aren't exceeded
-               - Confirm SSL requirements
-            """)
-        
-        st.info("""
-        **💡 Pro Tip:** Use the sidebar connection tester to validate your settings before proceeding.
-        """)
-
-
-if __name__ == "__main__":
-    main()
+#!/usr/bin/env python3
 """
 Professional PostgreSQL MCP Server with Advanced Features
 =========================================================
@@ -208,7 +15,7 @@ A comprehensive, enterprise-grade PostgreSQL management interface with:
 - 🚀 Query optimization suggestions
 - 📤 Data export in multiple formats
 
-Author: Professional Development Team
+Author: Prashant Khadayate
 Version: 2.0.0
 
 Required Dependencies (add to requirements.txt):
@@ -250,6 +57,8 @@ try:
     NETWORKX_AVAILABLE = True
 except ImportError:
     NETWORKX_AVAILABLE = False
+
+PANDAS_AVAILABLE = True  # pandas is imported above
 
 # ---------------------------------------------------------------------------
 # Configuration and Data Models
@@ -748,6 +557,23 @@ def setup_professional_theme():
         margin: 1rem 0;
     }
     </style>
+    """, unsafe_allow_html=True)
+
+
+def render_branded_header():
+    """Render branded header"""
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                padding: 2rem; border-radius: 15px; text-align: center; 
+                margin-bottom: 2rem; color: white;">
+        <h1 style="margin: 0; font-size: 2.5rem;">🐘 PostgreSQL MCP Server Pro</h1>
+        <p style="margin: 0.5rem 0 0 0; font-size: 1.2rem; opacity: 0.9;">
+            Enterprise-Grade Database Management & AI-Powered Analytics
+        </p>
+        <p style="margin: 0.5rem 0 0 0; opacity: 0.8;">
+            Created by <strong>Prashant Khadayate</strong> | Version 2.0.0
+        </p>
+    </div>
     """, unsafe_allow_html=True)
 
 
@@ -1470,7 +1296,7 @@ def run_health_check(db_manager: DatabaseManager):
                     with st.expander(f"✅ {check_name}"):
                         if PANDAS_AVAILABLE:
                             df = pd.DataFrame(result.data)
-                            st.dataframe(df, width='stretch')
+                            st.dataframe(df, use_container_width=True)
                         else:
                             for i, row in enumerate(result.data):
                                 st.write(f"Row {i+1}:", {k: str(v) for k, v in row.items()})
@@ -1621,82 +1447,195 @@ LIMIT 20;""",
                 st.error(f"Import failed: {e}")
 
 
-# ---------------------------------------------------------------------------
-# Main Application
-# ---------------------------------------------------------------------------
-
 def main():
-    """Main application entry point"""
+    """Main application entry point with enhanced branding"""
     
-    # Page configuration
+    # Page configuration with custom favicon
     st.set_page_config(
-        page_title="PostgreSQL MCP Server Pro",
+        page_title="PostgreSQL MCP Server Pro | By Prashant Khadayate",
         page_icon="🐘",
         layout="wide",
-        initial_sidebar_state="expanded"
+        initial_sidebar_state="expanded",
+        menu_items={
+            'Get Help': 'https://github.com/prashant-khadayate/postgresql-mcp-server',
+            'Report a bug': "https://github.com/prashant-khadayate/postgresql-mcp-server/issues",
+            'About': "# PostgreSQL MCP Server Pro\n**Created by Prashant Khadayate**\n\nEnterprise-grade PostgreSQL management with AI assistance."
+        }
     )
     
     # Professional theme setup
     setup_professional_theme()
     
-    # Header
-    st.markdown("""
-    # 🐘 PostgreSQL MCP Server Pro
-    ### *Enterprise-Grade Database Management & AI-Powered Analytics*
-    
-    ---
-    """)
+    # Render branded header
+    render_branded_header()
     
     # Connection sidebar
     conn_str, settings = render_connection_sidebar()
     
     if not conn_str:
-        st.error("⚠️ Please provide database connection details in the sidebar")
-        st.info("""
-        **Get Started:**
-        1. Enter your PostgreSQL connection string in the sidebar
-        2. Test the connection
-        3. Start exploring your database with AI assistance!
+        st.markdown("""
+        <div class="info-box">
+            <h3>🚀 Welcome to PostgreSQL MCP Server Pro!</h3>
+            <p><strong>Get started in 3 simple steps:</strong></p>
+            <ol>
+                <li>🔗 Enter your PostgreSQL connection details in the sidebar</li>
+                <li>🔍 Test your connection to ensure everything works</li>
+                <li>🤖 Start exploring your database with AI assistance!</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
         
-        **Features:**
-        - 🤖 Natural Language to SQL conversion
-        - 📊 Interactive data visualization
-        - 📈 Performance monitoring
-        - ⭐ Query favorites management
-        - 🔍 Advanced schema exploration
-        """)
+        # Feature showcase
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("""
+            ### 🤖 AI-Powered Queries
+            - Natural language to SQL conversion
+            - Smart query optimization
+            - Multiple AI providers support
+            - Real-time streaming responses
+            """)
+        
+        with col2:
+            st.markdown("""
+            ### 📊 Advanced Analytics
+            - Interactive data visualizations
+            - Performance monitoring
+            - Query profiling & optimization
+            - Real-time database metrics
+            """)
+        
+        with col3:
+            st.markdown("""
+            ### 🔐 Enterprise Features
+            - Secure connection management
+            - Query history & favorites
+            - Professional UI/UX
+            - Export capabilities
+            """)
+        
+        # Technology showcase
+        st.markdown("---")
+        st.markdown("""
+        <div style="text-align: center; padding: 2rem;">
+            <h3 style="color: #667eea; margin-bottom: 1rem;">🚀 Powered by Modern Technology Stack</h3>
+            <div style="font-size: 1.1rem; color: #666;">
+                <span style="margin: 0 1rem;">🐘 <strong>PostgreSQL</strong></span>
+                <span style="margin: 0 1rem;">🤖 <strong>OpenAI GPT-4</strong></span>
+                <span style="margin: 0 1rem;">⚡ <strong>Streamlit</strong></span>
+                <span style="margin: 0 1rem;">📊 <strong>Plotly</strong></span>
+                <span style="margin: 0 1rem;">🐍 <strong>Python</strong></span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
         return
     
     # Initialize database manager
     try:
         db_manager = DatabaseManager(conn_str)
         
-        # Test connection
-        with db_manager.get_connection():
-            pass  # Connection successful
+        # Test connection with loading animation
+        with st.spinner("🔄 Establishing database connection..."):
+            with db_manager.get_connection():
+                pass  # Connection successful
+        
+        # Connection success message
+        st.markdown("""
+        <div class="success-box" style="margin-bottom: 2rem;">
+            <strong>🎉 Successfully connected to your PostgreSQL database!</strong><br>
+            Ready to explore your data with AI-powered assistance.
+        </div>
+        """, unsafe_allow_html=True)
         
         # Render main dashboard
         render_main_dashboard(db_manager, settings)
         
-        # Footer
+        # Enhanced footer with creator credits
         st.markdown("---")
         st.markdown("""
-        <div style="text-align: center; color: #666; padding: 20px;">
-            <p>🚀 <strong>PostgreSQL MCP Server Pro v2.0</strong> | 
-            Built with ❤️ using Streamlit | 
-            <a href="#" style="color: #007bff;">Documentation</a> | 
-            <a href="#" style="color: #007bff;">Support</a></p>
+        <div style="background: linear-gradient(135deg, #f8f9ff 0%, #e8f2ff 100%); 
+                    padding: 2rem; border-radius: 15px; text-align: center; 
+                    margin-top: 3rem; border: 1px solid rgba(102, 126, 234, 0.1);">
+            
+            <div style="display: flex; justify-content: center; align-items: center; gap: 2rem; flex-wrap: wrap;">
+                <div>
+                    <h4 style="color: #667eea; margin: 0;">🐘 PostgreSQL MCP Server Pro</h4>
+                    <p style="margin: 0.5rem 0 0 0; color: #666;">Enterprise-Grade Database Management Platform</p>
+                </div>
+                
+                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
+                
+                <div>
+                    <h4 style="color: #667eea; margin: 0;">👨‍💻 Created by</h4>
+                    <p style="margin: 0.5rem 0 0 0; color: #333; font-weight: 600;">Prashant Khadayate</p>
+                </div>
+                
+                <div style="height: 40px; width: 1px; background: rgba(102, 126, 234, 0.3);"></div>
+                
+                <div>
+                    <h4 style="color: #667eea; margin: 0;">🚀 Version</h4>
+                    <p style="margin: 0.5rem 0 0 0; color: #666;">2.0.0 Professional</p>
+                </div>
+            </div>
+            
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid rgba(102, 126, 234, 0.2);">
+                <p style="margin: 0; color: #888; font-size: 0.9rem;">
+                    Built with ❤️ using 
+                    <strong>Streamlit</strong> • <strong>PostgreSQL</strong> • <strong>OpenAI</strong> • <strong>Python</strong>
+                </p>
+                <div style="margin-top: 1rem;">
+                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">📖 Documentation</a>
+                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">🐛 Report Issues</a>
+                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">⭐ GitHub</a>
+                    <a href="#" style="color: #667eea; text-decoration: none; margin: 0 1rem;">💬 Support</a>
+                </div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
     
     except Exception as e:
-        st.error(f"Failed to connect to database: {e}")
+        st.markdown(f"""
+        <div class="error-box">
+            <h3>❌ Database Connection Failed</h3>
+            <p><strong>Error:</strong> {str(e)[:200]}{'...' if len(str(e)) > 200 else ''}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Troubleshooting guide
+        with st.expander("🔧 Troubleshooting Guide", expanded=True):
+            st.markdown("""
+            **Common Connection Issues & Solutions:**
+            
+            1. **🔌 Connection String Format**
+               ```
+               postgresql://username:password@host:port/database
+               ```
+               Example: `postgresql://postgres:mypass@localhost:5432/mydb`
+            
+            2. **🌐 Network Issues**
+               - Verify the database server is running
+               - Check if the host and port are correct
+               - Ensure firewall allows connections
+            
+            3. **🔐 Authentication Problems**
+               - Verify username and password
+               - Check if user has necessary permissions
+               - Confirm database name exists
+            
+            4. **🛡️ SSL/Security Settings**
+               - Add `?sslmode=require` for secure connections
+               - Use `?sslmode=disable` for local development
+            
+            5. **🚀 Cloud Database Tips**
+               - Check if your IP is whitelisted
+               - Verify connection limits aren't exceeded
+               - Confirm SSL requirements
+            """)
+        
         st.info("""
-        **Connection Issues?**
-        - Verify your connection string format
-        - Check if the database server is running
-        - Ensure network connectivity
-        - Validate credentials and permissions
+        **💡 Pro Tip:** Use the sidebar connection tester to validate your settings before proceeding.
         """)
 
 
