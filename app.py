@@ -512,19 +512,22 @@ def render_connection_sidebar() -> Tuple[str, Dict]:
     
     # Connection test
     if conn_str and st.sidebar.button("🔍 Test Connection"):
-        with st.sidebar.spinner("Testing connection..."):
-            try:
-                db_manager = DatabaseManager(conn_str)
-                result = db_manager.execute_query("SELECT version() as version")
-                if result.status == "success":
-                    st.sidebar.success("✅ Connection successful!")
-                    if result.data:
-                        version = result.data[0].get('version', 'Unknown')
-                        st.sidebar.info(f"PostgreSQL: {version[:50]}...")
-                else:
-                    st.sidebar.error(f"❌ Connection failed: {result.error}")
-            except Exception as e:
-                st.sidebar.error(f"❌ Connection failed: {e}")
+        # Create placeholder for status updates
+        status_placeholder = st.sidebar.empty()
+        status_placeholder.info("Testing connection...")
+        
+        try:
+            db_manager = DatabaseManager(conn_str)
+            result = db_manager.execute_query("SELECT version() as version")
+            if result.status == "success":
+                status_placeholder.success("✅ Connection successful!")
+                if result.data:
+                    version = result.data[0].get('version', 'Unknown')
+                    st.sidebar.info(f"PostgreSQL: {version[:50]}...")
+            else:
+                status_placeholder.error(f"❌ Connection failed: {result.error}")
+        except Exception as e:
+            status_placeholder.error(f"❌ Connection failed: {e}")
     
     # Advanced settings
     with st.sidebar.expander("⚙️ Advanced Settings"):
